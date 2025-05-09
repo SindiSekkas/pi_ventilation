@@ -283,7 +283,70 @@ class DeviceManager:
                 pass
         
         return False
-    
+
+        def add_device(self, mac, name=None, owner=None, device_type="unknown", vendor=None, 
+                count_for_presence=False, confirmation_status="unconfirmed"):
+        """
+        Add a new device to the device manager.
+        
+        Args:
+            mac: MAC address of device
+            name: Name of device
+            owner: Owner of device
+            device_type: Type of device (phone, laptop, etc.)
+            vendor: Device manufacturer
+            count_for_presence: Whether to count this device for presence detection
+            confirmation_status: Whether device has been confirmed by a user
+        
+        Returns:
+            bool: Success status
+        """
+        with self._lock:
+            mac = mac.lower()
+            
+            # Check if device already exists
+            if mac in self.devices:
+                logger.warning(f"Device {mac} already exists, updating instead of adding")
+                # Update existing device with new information
+                device = self.devices[mac]
+                if name:
+                    device.name = name
+                if owner:
+                    device.owner = owner
+                if device_type:
+                    device.device_type = device_type
+                if vendor:
+                    device.vendor = vendor
+                device.count_for_presence = count_for_presence
+                device.confirmation_status = confirmation_status
+            else:
+                # Create new device
+                device = Device(
+                    mac=mac,
+                    name=name,
+                    owner=owner,
+                    device_type=device_type,
+                    vendor=vendor,
+                    count_for_presence=count_for_presence,
+                    confirmation_status=confirmation_status
+                )
+                self.devices[mac] = device
+                logger.info(f"Added new device: {device.name} ({device.mac})")
+            
+            # Save changes to file
+            self._save_devices()
+            
+            # Notify if callback is registered
+            if self.notification_callback and mac not in self.devices:
+                self.notification_callback("new_device", 
+                                        device_name=device.name,
+                                        device_mac=mac,
+                                        device_type=device_type,
+                                        vendor=vendor,
+                                        confidence=device.confidence_score)
+            
+            return True
+            
     def calculate_people_present(self):
         """
         Calculate number of people present with enhanced reliability.

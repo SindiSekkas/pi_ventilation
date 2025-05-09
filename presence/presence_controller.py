@@ -95,14 +95,24 @@ class PresenceController:
                 # New device discovered
                 logger.info(f"New device discovered: {mac} ({ip}) - {vendor}")
                 
+                # Determine device type
+                device_type = "unknown"
+                if vendor:
+                    from utils.network_scanner import guess_device_type
+                    device_type = guess_device_type(mac, vendor)
+                
                 # Use vendor name for device name if available
                 name = vendor if vendor != "Unknown" else f"New-{mac[-5:]}"
+                
+                # Count all phones for presence automatically
+                count_for_presence = (device_type == "phone")
                 
                 self.device_manager.add_device(
                     mac=mac,
                     name=name,
                     vendor=vendor,
-                    count_for_presence=False  # We'll let user confirm before counting
+                    device_type=device_type,
+                    count_for_presence=count_for_presence 
                 )
     
     def handle_device_notification(self, action, **kwargs):

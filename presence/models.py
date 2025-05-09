@@ -53,7 +53,7 @@ class Device:
     """Represents a network device for presence detection."""
     
     def __init__(self, mac, name=None, owner=None, device_type=DeviceType.UNKNOWN.value, 
-                vendor=None, count_for_presence=False, confirmation_status=ConfirmationStatus.UNCONFIRMED.value):
+                vendor=None, count_for_presence=None, confirmation_status=ConfirmationStatus.UNCONFIRMED.value):
         """
         Initialize a device.
         
@@ -71,7 +71,12 @@ class Device:
         self.owner = owner
         self.device_type = device_type
         self.vendor = vendor or "Unknown"
+        
+        # Automatically count phones for presence
+        if count_for_presence is None:
+            count_for_presence = (device_type == DeviceType.PHONE.value)
         self.count_for_presence = count_for_presence
+        
         self.confirmation_status = confirmation_status
         
         # Timing information

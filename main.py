@@ -30,6 +30,8 @@ from sensors.reader import SensorReader
 from utils.pico_manager import PicoManager
 from control.ventilation_controller import VentilationController
 from control.markov_controller import MarkovController
+from presence.device_manager import DeviceManager
+from presence.presence_controller import PresenceController
 
 def main():
     """Main application entry point."""
@@ -58,7 +60,23 @@ def main():
         if not sensor_reader.start():
             logger.error("Failed to start sensor reader")
             return 1
-            
+
+        # Initialize device manager
+        device_manager = DeviceManager(data_dir=os.path.join(DATA_DIR, "presence"))   
+
+        # Initialize presence controller
+        presence_controller = PresenceController(
+            device_manager=device_manager,
+            data_manager=data_manager,
+            scan_interval=300  # 5 minutes between scans
+        )
+
+        # Start presence controller
+        if presence_controller.start():
+            logger.info("Presence detection system started")
+        else:
+            logger.error("Failed to start presence detection system")
+
         # Initialize Markov controller
         markov_controller = MarkovController(
             data_manager=data_manager,
