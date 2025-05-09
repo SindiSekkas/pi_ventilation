@@ -4,6 +4,7 @@ import time
 import threading
 import logging
 from datetime import datetime
+from config.settings import SKIP_INITIALIZATION, INIT_MEASUREMENTS
 
 logger = logging.getLogger(__name__)
 
@@ -48,35 +49,58 @@ class SensorReader:
                 logger.error(f"Failed to initialize BMP280 sensor: {e}")
                 raise
             
-            # Wait for first measurement
-            logger.info("Waiting for the first measurement...")
-            time.sleep(120)
-            
-            # Perform initialization measurements
-            logger.info("Performing initialization measurements...")
-            for i in range(5):
-                if not self.data_manager.latest_data["initialization"]["status"]:
-                    logger.info("Initialization skipped by user")
-                    break
-                    
+            # Check if initialization should be skipped
+            if SKIP_INITIALIZATION:
+                logger.info("Initialization phase skipped by configuration")
+                self.completed_measurements = INIT_MEASUREMENTS if INIT_MEASUREMENTS > 0 else 5
+                self.data_manager.update_init_status(self.start_time, self.completed_measurements)
+                
+                # Take one quick measurement to populate data
                 try:
                     co2, temp_scd41, humidity = self.scd41_manager.read_measurement()
                     temp_bmp280 = bmp280.read_temperature()
                     pressure = bmp280.read_pressure()
                     
-                    self.completed_measurements += 1
-                    if self.completed_measurements == 5:
-                        self.data_manager.update_sensor_data(
-                            (co2, temp_scd41, humidity),
-                            (temp_bmp280, pressure)
-                        )
-                        
-                    logger.info(f"Initialization measurement {self.completed_measurements}/5 complete")
-                    time.sleep(120)
+                    self.data_manager.update_sensor_data(
+                        (co2, temp_scd41, humidity),
+                        (temp_bmp280, pressure)
+                    )
+                    logger.info("Initial measurement taken")
                 except Exception as e:
-                    logger.error(f"Error during initialization measurement: {e}")
-                    time.sleep(5)
-                    continue
+                    logger.error(f"Error during initial measurement: {e}")
+                
+            else:
+                # Wait for first measurement
+                logger.info("Waiting for the first measurement...")
+                time.sleep(120)
+                
+                # Perform initialization measurements
+                logger.info("Performing initialization measurements...")
+                for i in range(INIT_MEASUREMENTS):
+                    if not self.data_manager.latest_data["initialization"]["status"]:
+                        logger.info("Initialization skipped by user")
+                        break
+                        
+                    try:
+                        co2, temp_scd41, humidity = self.scd41_manager.read_measurement()
+                        temp_bmp280 = bmp280.read_temperature()
+                        pressure = bmp280.read_pressure()
+                        
+                        self.completed_measurements += 1
+                        self.data_manager.update_init_status(self.start_time, self.completed_measurements)
+                        
+                        if self.completed_measurements == INIT_MEASUREMENTS:
+                            self.data_manager.update_sensor_data(
+                                (co2, temp_scd41, humidity),
+                                (temp_bmp280, pressure)
+                            )
+                            
+                        logger.info(f"Initialization measurement {self.completed_measurements}/{INIT_MEASUREMENTS} complete")
+                        time.sleep(120)
+                    except Exception as e:
+                        logger.error(f"Error during initialization measurement: {e}")
+                        time.sleep(5)
+                        continue
             
             # Start normal measurement loop
             logger.info("Starting normal measurement loop...")

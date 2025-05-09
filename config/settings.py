@@ -28,7 +28,7 @@ INIT_MEASUREMENTS = 5  # Number of initialization measurements
 PICO_IP = os.environ.get("PICO_IP", "192.168.0.110")
 
 # Room default settings
-DEFAULT_OCCUPANTS = 1
+DEFAULT_OCCUPANTS = 2
 DEFAULT_CO2_THRESHOLD = 1000  # ppm
 DEFAULT_TEMP_MIN = 20.0  # °C
 DEFAULT_TEMP_MAX = 24.0  # °C
@@ -40,3 +40,7 @@ AUTO_VENTILATION = True  # Enable automatic ventilation control
 # Directories
 DATA_DIR = "data"
 CSV_DIR = os.path.join(DATA_DIR, "csv")
+
+# Skip initialisation measurements
+SKIP_INITIALIZATION = True
+INIT_MEASUREMENTS = 0 if SKIP_INITIALIZATION else 5 

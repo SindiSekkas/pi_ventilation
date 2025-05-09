@@ -72,6 +72,133 @@ def fallback_scan():
         logger.error(f"Fallback also failed: {e}")
         return []
 
+def check_arp_table(mac_address):
+    """
+    Check if a device is in the ARP table.
+    
+    Args:
+        mac_address: MAC address to check
+        
+    Returns:
+        bool: True if device is in ARP table, False otherwise
+    """
+    try:
+        # Normalize MAC format for comparison
+        mac = mac_address.lower().replace('-', ':')
+        
+        # First check /proc/net/arp file
+        try:
+            with open('/proc/net/arp', 'r') as f:
+                for line in f.readlines()[1:]:  # Skip header
+                    parts = line.strip().split()
+                    if len(parts) >= 4 and parts[3].lower() == mac:
+                        logger.debug(f"Device {mac} found in /proc/net/arp")
+                        return True
+        except Exception:
+            pass
+        
+        # Then try using the arp command
+        result = subprocess.run(
+            ["arp", "-a"], 
+            capture_output=True, 
+            text=True,
+            timeout=2
+        )
+        
+        # Look for the MAC in the output
+        if mac in result.stdout.lower():
+            logger.debug(f"Device {mac} found in arp -a output")
+            return True
+            
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error checking ARP table for {mac_address}: {e}")
+        return False
+
+def ping_device(ip_address, count=1, timeout=1):
+    """
+    Ping a device to check if it's responsive.
+    
+    Args:
+        ip_address: IP address to ping
+        count: Number of ping packets to send
+        timeout: Timeout for each ping in seconds
+        
+    Returns:
+        bool: True if device responds, False otherwise
+    """
+    try:
+        result = subprocess.run(
+            ["ping", "-c", str(count), "-W", str(timeout), ip_address],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout+1
+        )
+        success = result.returncode == 0
+        if success:
+            logger.debug(f"Ping to {ip_address} successful")
+        return success
+        
+    except Exception as e:
+        logger.error(f"Error pinging device {ip_address}: {e}")
+        return False
+
+def check_device_presence(mac_address, ip_address=None, methods=None):
+    """
+    Check if a specific device is present using multiple methods.
+    
+    Args:
+        mac_address: MAC address to check
+        ip_address: IP address if known, otherwise attempt to find it
+        methods: List of methods to try ['arp_scan', 'arp_table', 'ping']
+        
+    Returns:
+        tuple: (is_present, detection_method, additional_info)
+    """
+    methods = methods or ['arp_scan', 'arp_table', 'ping']
+    mac_address = mac_address.lower()
+    
+    # Method 1: Check ARP table
+    if 'arp_table' in methods:
+        arp_present = check_arp_table(mac_address)
+        if arp_present:
+            return (True, 'arp_table', None)
+    
+    # Method 2: Check with directed ARP scan if IP is known
+    if 'arp_scan' in methods and ip_address:
+        try:
+            result = subprocess.run(
+                ["sudo", "arp-scan", ip_address], 
+                capture_output=True, 
+                text=True,
+                timeout=2
+            )
+            if mac_address in result.stdout.lower():
+                return (True, 'direct_arp_scan', None)
+        except Exception:
+            pass
+    
+    # Method 3: Try to find IP if not provided
+    if not ip_address and 'arp_scan' in methods:
+        try:
+            # Do a quick network scan to find the device
+            devices = scan_network()
+            for device_mac, device_ip, _ in devices:
+                if device_mac.lower() == mac_address.lower():
+                    ip_address = device_ip
+                    return (True, 'network_scan', {'ip': device_ip})
+        except Exception:
+            pass
+    
+    # Method 4: Try ping if IP is known
+    if 'ping' in methods and ip_address:
+        ping_result = ping_device(ip_address)
+        if ping_result:
+            return (True, 'ping', {'ip': ip_address})
+    
+    return (False, None, None)
+
 def guess_device_type(mac, vendor):
     """
     Guess device type based on MAC address and vendor.
