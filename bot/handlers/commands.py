@@ -22,8 +22,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_auth.is_trusted(user_id):
         # Show menu for trusted users
         keyboard = [
-            [InlineKeyboardButton("Add New User", callback_data="add_user")],
-            [InlineKeyboardButton("Ventilation Control", callback_data="vent_menu")]
+            [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
+            [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
@@ -83,7 +83,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_auth.start_adding_user(user_id)
     
     # Create cancel button
-    keyboard = [[InlineKeyboardButton("Cancel", callback_data="cancel_add_user")]]
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_add_user")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
@@ -132,7 +132,7 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         user_auth.start_adding_user(user_id)
         
         # Update message with cancel button
-        keyboard = [[InlineKeyboardButton("Cancel", callback_data="cancel_add_user")]]
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_add_user")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
@@ -148,8 +148,8 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         
         # Return to main menu
         keyboard = [
-            [InlineKeyboardButton("Add New User", callback_data="add_user")],
-            [InlineKeyboardButton("Ventilation Control", callback_data="vent_menu")]
+            [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
+            [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         

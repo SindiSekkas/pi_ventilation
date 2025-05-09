@@ -28,24 +28,27 @@ async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     
     # Add auto mode toggle
-    auto_text = "Disable Auto Mode" if auto_mode else "Enable Auto Mode"
+    auto_text = "🔴 Disable Auto Mode" if auto_mode else "🟢 Enable Auto Mode"
     keyboard.append([InlineKeyboardButton(auto_text, callback_data="vent_auto_toggle")])
     
     # Manual control buttons (disabled if auto mode is on)
     if auto_mode:
-        keyboard.append([InlineKeyboardButton("Manual Control (Auto Mode Active)", callback_data="vent_auto_notice")])
+        keyboard.append([InlineKeyboardButton("⚠️ Manual Control (Auto Mode Active)", callback_data="vent_auto_notice")])
     else:
         keyboard.append([
-            InlineKeyboardButton("Off", callback_data="vent_off"),
-            InlineKeyboardButton("Low", callback_data="vent_low")
+            InlineKeyboardButton("⏹️ Off", callback_data="vent_off"),
+            InlineKeyboardButton("🔽 Low", callback_data="vent_low")
         ])
         keyboard.append([
-            InlineKeyboardButton("Medium", callback_data="vent_medium"),
-            InlineKeyboardButton("Max", callback_data="vent_max")
+            InlineKeyboardButton("▶️ Medium", callback_data="vent_medium"),
+            InlineKeyboardButton("🔼 Max", callback_data="vent_max")
         ])
     
     # Status button
-    keyboard.append([InlineKeyboardButton("Check Status", callback_data="vent_status")])
+    keyboard.append([InlineKeyboardButton("📊 Check Status", callback_data="vent_status")])
+    
+    # Main menu button
+    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="vent_main_menu")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -53,7 +56,7 @@ async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}"
     
     await update.message.reply_text(
-        f"Ventilation Control\n\n{status_text}",
+        f"🌡️ Ventilation Control\n\n{status_text}",
         reply_markup=reply_markup
     )
 
@@ -82,7 +85,7 @@ async def vent_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     last_action = controller_status.get("last_action", "None")
     
     # Get sensor data
-    status_text = "Ventilation Status:\n"
+    status_text = "📋 Ventilation Status:\n"
     status_text += f"State: {'ON' if current_status else 'OFF'}\n"
     status_text += f"Speed: {current_speed}\n"
     status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}\n"
@@ -94,11 +97,11 @@ async def vent_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         humidity = data_manager.latest_data["scd41"]["humidity"]
         occupants = data_manager.latest_data["room"]["occupants"]
         
-        status_text += "Current Conditions:\n"
-        if co2: status_text += f"CO2: {co2} ppm\n"
-        if temp: status_text += f"Temperature: {temp}°C\n"
-        if humidity: status_text += f"Humidity: {humidity}%\n"
-        status_text += f"Occupants: {occupants}\n"
+        status_text += "📊 Current Conditions:\n"
+        if co2: status_text += f"🌬️ CO2: {co2} ppm\n"
+        if temp: status_text += f"🌡️ Temperature: {temp}°C\n"
+        if humidity: status_text += f"💧 Humidity: {humidity}%\n"
+        status_text += f"👥 Occupants: {occupants}\n"
     
     await update.message.reply_text(status_text)
 
@@ -127,29 +130,75 @@ async def handle_vent_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             # Toggle auto mode
             auto_mode = controller.get_status()["auto_mode"] if controller else False
             if controller:
-                controller.set_auto_mode(not auto_mode)
-                new_mode = not auto_mode
+                # If auto mode is enabled and we're turning it off, show confirmation dialog
+                if auto_mode:
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("✅ Yes", callback_data="vent_auto_off_confirm"),
+                            InlineKeyboardButton("❌ No", callback_data="vent_auto_off_cancel")
+                        ]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await query.edit_message_text(
+                        "Are you sure you want to turn auto mode off?",
+                        reply_markup=reply_markup
+                    )
+                    return
+                else:
+                    # When turning on auto mode, no confirmation needed
+                    controller.set_auto_mode(True)
+                    await query.edit_message_text(
+                        "✅ Auto mode enabled.\n"
+                        "Returning to ventilation menu..."
+                    )
+                    # Show menu again after a short delay
+                    if context.application.job_queue:
+                        context.application.job_queue.run_once(
+                            lambda context: show_vent_menu(query.message, context),
+                            2
+                        )
+                    else:
+                        await show_vent_menu(query.message, context)
+            else:
+                await query.edit_message_text("⚠️ Auto mode control not available.")
+        
+        elif action == "auto_off_confirm":
+            # User confirmed turning off auto mode
+            if controller:
+                controller.set_auto_mode(False)
                 await query.edit_message_text(
-                    f"Auto mode {'enabled' if new_mode else 'disabled'}.\n"
+                    "❌ Auto mode disabled.\n"
                     "Returning to ventilation menu..."
                 )
                 # Show menu again after a short delay
-                # Check if job_queue is available, if not show the menu immediately
                 if context.application.job_queue:
-                    # Don't await run_once as it returns a Job object, not a coroutine
                     context.application.job_queue.run_once(
                         lambda context: show_vent_menu(query.message, context),
                         2
                     )
                 else:
-                    # Job queue not available, show menu directly
                     await show_vent_menu(query.message, context)
             else:
-                await query.edit_message_text("Auto mode control not available.")
+                await query.edit_message_text("⚠️ Auto mode control not available.")
+                
+        elif action == "auto_off_cancel":
+            # User canceled turning off auto mode
+            await query.edit_message_text(
+                "✅ Auto mode remains enabled.\n"
+                "Returning to ventilation menu..."
+            )
+            # Show menu again after a short delay
+            if context.application.job_queue:
+                context.application.job_queue.run_once(
+                    lambda context: show_vent_menu(query.message, context),
+                    2
+                )
+            else:
+                await show_vent_menu(query.message, context)
         
         elif action == "auto_notice":
             await query.edit_message_text(
-                "Manual control is disabled while Auto Mode is active.\n"
+                "⚠️ Manual control is disabled while Auto Mode is active.\n"
                 "Please disable Auto Mode to control ventilation manually."
             )
         
@@ -162,14 +211,27 @@ async def handle_vent_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             status_text = f"Current: {'ON' if current_status else 'OFF'} ({current_speed})\n"
             status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}"
             
-            await query.edit_message_text(status_text)
+            await query.edit_message_text(f"📊 Status\n\n{status_text}")
+        
+        elif action == "main_menu":
+            # Return to main menu
+            keyboard = [
+                [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
+                [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                f"🏠 Main Menu. What would you like to do?",
+                reply_markup=reply_markup
+            )
+            logger.info(f"User {user_id} returned to main menu from ventilation control")
         
         elif action in ["off", "low", "medium", "max"]:
             # Check if auto mode is enabled
             auto_mode = controller.get_status()["auto_mode"] if controller else False
             if auto_mode:
                 await query.edit_message_text(
-                    "Cannot manually control ventilation while Auto Mode is enabled.\n"
+                    "⚠️ Cannot manually control ventilation while Auto Mode is enabled.\n"
                     "Please disable Auto Mode first."
                 )
                 return
@@ -203,24 +265,27 @@ async def show_vent_menu(message, context):
     keyboard = []
     
     # Add auto mode toggle
-    auto_text = "Disable Auto Mode" if auto_mode else "Enable Auto Mode"
+    auto_text = "🔴 Disable Auto Mode" if auto_mode else "🟢 Enable Auto Mode"
     keyboard.append([InlineKeyboardButton(auto_text, callback_data="vent_auto_toggle")])
     
     # Manual control buttons (disabled if auto mode is on)
     if auto_mode:
-        keyboard.append([InlineKeyboardButton("Manual Control (Auto Mode Active)", callback_data="vent_auto_notice")])
+        keyboard.append([InlineKeyboardButton("⚠️ Manual Control (Auto Mode Active)", callback_data="vent_auto_notice")])
     else:
         keyboard.append([
-            InlineKeyboardButton("Off", callback_data="vent_off"),
-            InlineKeyboardButton("Low", callback_data="vent_low")
+            InlineKeyboardButton("⏹️ Off", callback_data="vent_off"),
+            InlineKeyboardButton("🔽 Low", callback_data="vent_low")
         ])
         keyboard.append([
-            InlineKeyboardButton("Medium", callback_data="vent_medium"),
-            InlineKeyboardButton("Max", callback_data="vent_max")
+            InlineKeyboardButton("▶️ Medium", callback_data="vent_medium"),
+            InlineKeyboardButton("🔼 Max", callback_data="vent_max")
         ])
     
     # Status button
-    keyboard.append([InlineKeyboardButton("Check Status", callback_data="vent_status")])
+    keyboard.append([InlineKeyboardButton("📊 Check Status", callback_data="vent_status")])
+    
+    # Main menu button
+    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="vent_main_menu")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -228,7 +293,7 @@ async def show_vent_menu(message, context):
     status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}"
     
     await message.edit_text(
-        f"Ventilation Control\n\n{status_text}",
+        f"🌡️ Ventilation Control\n\n{status_text}",
         reply_markup=reply_markup
     )
 
