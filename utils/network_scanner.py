@@ -23,7 +23,7 @@ def scan_network():
         )
         
         for line in result.stdout.splitlines():
-            match = re.search(r'(\d+\.\d+\.\d+\.\d+)\s+([0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2})\s+(.*?)(?:\s+\(DUP: \d+\))?$', line)
+            match = re.search(r'(\d+\.\d+\.\d+\.\d+)\s+([0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2})\s+(.+?)(?:\s+\(DUP: \d+\))?$', line)
             if match:
                 ip = match.group(1)
                 mac = match.group(2).lower()
