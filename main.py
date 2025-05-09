@@ -29,6 +29,7 @@ from sensors.data_manager import DataManager
 from sensors.reader import SensorReader
 from utils.pico_manager import PicoManager
 from control.ventilation_controller import VentilationController
+from control.markov_controller import MarkovController
 
 def main():
     """Main application entry point."""
@@ -58,17 +59,17 @@ def main():
             logger.error("Failed to start sensor reader")
             return 1
             
-        # Initialize ventilation controller
-        ventilation_controller = VentilationController(
+        # Initialize Markov controller
+        markov_controller = MarkovController(
             data_manager=data_manager,
             pico_manager=pico_manager
         )
         
-        # Start ventilation controller
-        if ventilation_controller.start():
-            logger.info("Ventilation controller started")
+        # Start Markov controller
+        if markov_controller.start():
+            logger.info("Markov controller started")
         else:
-            logger.error("Failed to start ventilation controller")
+            logger.error("Failed to start Markov controller")
         
         logger.info("Ventilation system started successfully")
         

@@ -6,7 +6,7 @@ import logging
 import threading
 from datetime import datetime
 
-# Add the parent directory to sys.path to allow importing modules
+# parent directory to sys.path to allow importing modules
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
