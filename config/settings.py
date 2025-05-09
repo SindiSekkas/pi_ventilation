@@ -42,5 +42,5 @@ DATA_DIR = "data"
 CSV_DIR = os.path.join(DATA_DIR, "csv")
 
 # Skip initialisation measurements
-SKIP_INITIALIZATION = False
+SKIP_INITIALIZATION = True
 INIT_MEASUREMENTS = 0 if SKIP_INITIALIZATION else 5 
