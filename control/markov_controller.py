@@ -93,8 +93,60 @@ class MarkovController:
         self.exploration_rate = 0.2  # Chance of trying random action
         self.random_action_decay = 0.9999  # Decay rate for exploration
         
+        # Night mode settings
+        self.night_mode_enabled = True
+        self.night_mode_start_hour = 23
+        self.night_mode_end_hour = 7
+        
+        # Load night mode settings from file
+        self._load_night_mode_settings()
+        
         # Load or initialize transition model
         self.transition_model = self._load_or_initialize_model()
+    
+    def _load_night_mode_settings(self):
+        """Load night mode settings from file."""
+        night_settings_file = os.path.join(self.model_dir, "night_mode_settings.json")
+        try:
+            if os.path.exists(night_settings_file):
+                with open(night_settings_file, 'r') as f:
+                    settings = json.load(f)
+                    self.night_mode_enabled = settings.get("enabled", True)
+                    self.night_mode_start_hour = settings.get("start_hour", 23)
+                    self.night_mode_end_hour = settings.get("end_hour", 7)
+                    logger.info(f"Loaded night mode settings: {self.night_mode_start_hour}:00 - {self.night_mode_end_hour}:00")
+        except Exception as e:
+            logger.error(f"Error loading night mode settings: {e}")
+    
+    def _save_night_mode_settings(self):
+        """Save night mode settings to file."""
+        night_settings_file = os.path.join(self.model_dir, "night_mode_settings.json")
+        try:
+            settings = {
+                "enabled": self.night_mode_enabled,
+                "start_hour": self.night_mode_start_hour,
+                "end_hour": self.night_mode_end_hour
+            }
+            with open(night_settings_file, 'w') as f:
+                json.dump(settings, f, indent=2)
+            logger.info("Saved night mode settings")
+        except Exception as e:
+            logger.error(f"Error saving night mode settings: {e}")
+    
+    def _is_night_mode_active(self):
+        """Check if night mode is currently active."""
+        if not self.night_mode_enabled:
+            return False
+        
+        current_hour = datetime.now().hour
+        
+        # Handle case where night mode crosses midnight
+        if self.night_mode_start_hour > self.night_mode_end_hour:
+            # Night mode spans midnight (e.g., 23:00 - 7:00)
+            return current_hour >= self.night_mode_start_hour or current_hour < self.night_mode_end_hour
+        else:
+            # Night mode does not span midnight
+            return self.night_mode_start_hour <= current_hour < self.night_mode_end_hour
     
     def _create_state_key(self, co2_level, temp_level, occupancy, time_of_day):
         """Create a unique key for a state."""
@@ -196,6 +248,16 @@ class MarkovController:
             try:
                 # Skip if auto mode is disabled
                 if not self.auto_mode:
+                    time.sleep(self.scan_interval)
+                    continue
+                
+                # Check if night mode is active
+                if self._is_night_mode_active():
+                    # During night mode, only allow turning off ventilation
+                    current_status = self.pico_manager.get_ventilation_status()
+                    if current_status:
+                        logger.info("Night mode active - turning off ventilation")
+                        self._execute_action(Action.TURN_OFF.value)
                     time.sleep(self.scan_interval)
                     continue
                 
@@ -443,6 +505,18 @@ class MarkovController:
         logger.info(f"Automatic control {'enabled' if enabled else 'disabled'}")
         return True
     
+    def set_night_mode(self, enabled, start_hour=None, end_hour=None):
+        """Configure night mode settings."""
+        self.night_mode_enabled = enabled
+        if start_hour is not None:
+            self.night_mode_start_hour = start_hour
+        if end_hour is not None:
+            self.night_mode_end_hour = end_hour
+        
+        self._save_night_mode_settings()
+        logger.info(f"Night mode {'enabled' if enabled else 'disabled'}: {self.night_mode_start_hour}:00 - {self.night_mode_end_hour}:00")
+        return True
+    
     def get_status(self):
         """Get controller status information."""
         return {
@@ -454,7 +528,13 @@ class MarkovController:
             "exploration_rate": self.exploration_rate,
             "ventilation_status": self.pico_manager.get_ventilation_status(),
             "ventilation_speed": self.pico_manager.get_ventilation_speed(),
-            "last_action_time": self.last_action_time.isoformat() if self.last_action_time else None
+            "last_action_time": self.last_action_time.isoformat() if self.last_action_time else None,
+            "night_mode": {
+                "enabled": self.night_mode_enabled,
+                "start_hour": self.night_mode_start_hour,
+                "end_hour": self.night_mode_end_hour,
+                "currently_active": self._is_night_mode_active()
+            }
         }
     
     def set_thresholds(self, co2_low_max=None, co2_medium_max=None, temp_low_max=None, temp_medium_max=None):

@@ -37,6 +37,11 @@ DEFAULT_TEMP_MAX = 24.0  # °C
 VENTILATION_SPEEDS = ["off", "low", "medium", "max"]
 AUTO_VENTILATION = True  # Enable automatic ventilation control
 
+# Night mode settings
+NIGHT_MODE_ENABLED = True  # Enable night mode by default
+NIGHT_MODE_START_HOUR = 23  # 11 PM
+NIGHT_MODE_END_HOUR = 7     # 7 AM
+
 # Directories
 DATA_DIR = "data"
 CSV_DIR = os.path.join(DATA_DIR, "csv")

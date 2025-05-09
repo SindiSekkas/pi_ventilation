@@ -24,12 +24,27 @@ async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_speed = pico_manager.get_ventilation_speed()
     auto_mode = controller.get_status()["auto_mode"] if controller else False
     
+    # Get night mode status if available
+    night_mode_info = None
+    if controller and hasattr(controller, 'night_mode_enabled'):
+        night_mode_info = {
+            "enabled": controller.night_mode_enabled,
+            "start_hour": controller.night_mode_start_hour,
+            "end_hour": controller.night_mode_end_hour,
+            "currently_active": controller._is_night_mode_active()
+        }
+    
     # Create ventilation control menu
     keyboard = []
     
     # Add auto mode toggle
     auto_text = "🔴 Disable Auto Mode" if auto_mode else "🟢 Enable Auto Mode"
     keyboard.append([InlineKeyboardButton(auto_text, callback_data="vent_auto_toggle")])
+    
+    # Add night mode settings
+    if night_mode_info:
+        night_text = "🌙 Night Mode Settings"
+        keyboard.append([InlineKeyboardButton(night_text, callback_data="vent_night_settings")])
     
     # Manual control buttons (disabled if auto mode is on)
     if auto_mode:
@@ -53,7 +68,13 @@ async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     status_text = f"Current: {'ON' if current_status else 'OFF'} ({current_speed})\n"
-    status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}"
+    status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}\n"
+    if night_mode_info:
+        status_text += f"Night Mode: {'Enabled' if night_mode_info['enabled'] else 'Disabled'}"
+        if night_mode_info['enabled']:
+            status_text += f" ({night_mode_info['start_hour']}:00-{night_mode_info['end_hour']}:00)"
+        if night_mode_info['currently_active']:
+            status_text += " 🌙 Active"
     
     await update.message.reply_text(
         f"🌡️ Ventilation Control\n\n{status_text}",
@@ -89,7 +110,19 @@ async def vent_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     status_text += f"State: {'ON' if current_status else 'OFF'}\n"
     status_text += f"Speed: {current_speed}\n"
     status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}\n"
-    status_text += f"Last Auto Action: {last_action}\n\n"
+    status_text += f"Last Auto Action: {last_action}\n"
+    
+    # Night mode status
+    if controller and hasattr(controller, 'night_mode_enabled'):
+        night_mode_info = controller_status.get("night_mode", {})
+        status_text += f"Night Mode: {'Enabled' if night_mode_info.get('enabled', False) else 'Disabled'}"
+        if night_mode_info.get('enabled', False):
+            status_text += f" ({night_mode_info.get('start_hour', 23)}:00-{night_mode_info.get('end_hour', 7)}:00)"
+        if night_mode_info.get('currently_active', False):
+            status_text += " | Currently Active"
+        status_text += "\n"
+    
+    status_text += "\n"
     
     if data_manager:
         co2 = data_manager.latest_data["scd41"]["co2"]
@@ -202,6 +235,12 @@ async def handle_vent_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 "Please disable Auto Mode to control ventilation manually."
             )
         
+        elif action == "night_settings":
+            await show_night_settings_menu(query, controller)
+        
+        elif action.startswith("night_"):
+            await handle_night_mode_callbacks(query, controller, action[6:])
+        
         elif action == "status":
             # Show status
             current_status = pico_manager.get_ventilation_status()
@@ -236,6 +275,14 @@ async def handle_vent_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 )
                 return
             
+            # Check if night mode is active
+            if controller and hasattr(controller, '_is_night_mode_active') and controller._is_night_mode_active():
+                await query.edit_message_text(
+                    "⚠️ Night mode is currently active.\n"
+                    "Ventilation cannot be turned on during night hours."
+                )
+                return
+            
             # Perform ventilation control
             if action == "off":
                 success = pico_manager.control_ventilation("off")
@@ -251,6 +298,109 @@ async def handle_vent_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 await query.edit_message_text(f"❌ Failed to {message.lower()}")
                 logger.error(f"Failed to set ventilation to {action} for user {user_id}")
 
+async def show_night_settings_menu(query, controller):
+    """Show night mode settings menu."""
+    if not controller or not hasattr(controller, 'night_mode_enabled'):
+        await query.edit_message_text("⚠️ Night mode settings not available.")
+        return
+    
+    night_info = controller.get_status().get("night_mode", {})
+    enabled = night_info.get("enabled", False)
+    start_hour = night_info.get("start_hour", 23)
+    end_hour = night_info.get("end_hour", 7)
+    currently_active = night_info.get("currently_active", False)
+    
+    keyboard = []
+    
+    # Enable/Disable button
+    if enabled:
+        keyboard.append([InlineKeyboardButton("🌙 Disable Night Mode", callback_data="vent_night_disable")])
+    else:
+        keyboard.append([InlineKeyboardButton("🌟 Enable Night Mode", callback_data="vent_night_enable")])
+    
+    # Time setting buttons
+    keyboard.append([
+        InlineKeyboardButton(f"Start: {start_hour}:00", callback_data="vent_night_set_start"),
+        InlineKeyboardButton(f"End: {end_hour}:00", callback_data="vent_night_set_end")
+    ])
+    
+    # Back button
+    keyboard.append([InlineKeyboardButton("⬅️ Back to Ventilation", callback_data="vent_menu")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    status_text = f"🌙 Night Mode Settings\n\n"
+    status_text += f"Status: {'Enabled' if enabled else 'Disabled'}\n"
+    status_text += f"Time: {start_hour}:00 - {end_hour}:00\n"
+    if currently_active:
+        status_text += "Night mode is currently active"
+    
+    await query.edit_message_text(status_text, reply_markup=reply_markup)
+
+async def handle_night_mode_callbacks(query, controller, action):
+    """Handle night mode specific callbacks."""
+    if not controller or not hasattr(controller, 'set_night_mode'):
+        await query.edit_message_text("⚠️ Night mode settings not available.")
+        return
+    
+    # If we're returning to night settings menu, clear any pending context
+    if action == "settings":
+        # Clear any pending context
+        from bot.handlers.messages import night_mode_context
+        user_id = query.from_user.id
+        if user_id in night_mode_context:
+            del night_mode_context[user_id]
+    
+    if action == "enable":
+        controller.set_night_mode(enabled=True)
+        await query.edit_message_text("✅ Night mode enabled")
+        # Return to night settings menu
+        await show_night_settings_menu(query, controller)
+    
+    elif action == "disable":
+        controller.set_night_mode(enabled=False)
+        await query.edit_message_text("❌ Night mode disabled")
+        # Return to night settings menu
+        await show_night_settings_menu(query, controller)
+    
+    elif action == "set_start":
+        # Import the night_mode_context to store the waiting state
+        from bot.handlers.messages import night_mode_context
+        
+        # Set context that we're waiting for a start hour
+        user_id = query.from_user.id
+        night_mode_context[user_id] = {
+            "type": "start",
+            "message": query
+        }
+        
+        await query.edit_message_text(
+            "Enter start hour (0-23):\n"
+            "Reply to this message with the hour number.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Cancel", callback_data="vent_night_settings")
+            ]])
+        )
+    
+    elif action == "set_end":
+        # Import the night_mode_context to store the waiting state
+        from bot.handlers.messages import night_mode_context
+        
+        # Set context that we're waiting for an end hour
+        user_id = query.from_user.id
+        night_mode_context[user_id] = {
+            "type": "end",
+            "message": query
+        }
+        
+        await query.edit_message_text(
+            "Enter end hour (0-23):\n"
+            "Reply to this message with the hour number.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Cancel", callback_data="vent_night_settings")
+            ]])
+        )
+
 async def show_vent_menu(message, context):
     """Show ventilation menu after a delay."""
     pico_manager = context.application.bot_data["pico_manager"]
@@ -261,12 +411,27 @@ async def show_vent_menu(message, context):
     current_speed = pico_manager.get_ventilation_speed()
     auto_mode = controller.get_status()["auto_mode"] if controller else False
     
+    # Get night mode status if available
+    night_mode_info = None
+    if controller and hasattr(controller, 'night_mode_enabled'):
+        night_mode_info = {
+            "enabled": controller.night_mode_enabled,
+            "start_hour": controller.night_mode_start_hour,
+            "end_hour": controller.night_mode_end_hour,
+            "currently_active": controller._is_night_mode_active()
+        }
+    
     # Create ventilation control menu
     keyboard = []
     
     # Add auto mode toggle
     auto_text = "🔴 Disable Auto Mode" if auto_mode else "🟢 Enable Auto Mode"
     keyboard.append([InlineKeyboardButton(auto_text, callback_data="vent_auto_toggle")])
+    
+    # Add night mode settings
+    if night_mode_info:
+        night_text = "🌙 Night Mode Settings"
+        keyboard.append([InlineKeyboardButton(night_text, callback_data="vent_night_settings")])
     
     # Manual control buttons (disabled if auto mode is on)
     if auto_mode:
@@ -290,7 +455,13 @@ async def show_vent_menu(message, context):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     status_text = f"Current: {'ON' if current_status else 'OFF'} ({current_speed})\n"
-    status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}"
+    status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}\n"
+    if night_mode_info:
+        status_text += f"Night Mode: {'Enabled' if night_mode_info['enabled'] else 'Disabled'}"
+        if night_mode_info['enabled']:
+            status_text += f" ({night_mode_info['start_hour']}:00-{night_mode_info['end_hour']}:00)"
+        if night_mode_info['currently_active']:
+            status_text += " 🌙 Active"
     
     await message.edit_text(
         f"🌡️ Ventilation Control\n\n{status_text}",

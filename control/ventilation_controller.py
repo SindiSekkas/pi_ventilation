@@ -1,7 +1,10 @@
-"""Simple automatic ventilation controller."""
+"""Simple automatic ventilation controller.
+Mainly used for manual testing and debugging."""
 import logging
 import threading
 import time
+import json
+import os
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,62 @@ class VentilationController:
         self.last_action_time = None
         self.min_ventilation_time = 300  # Minimum time to run ventilation (seconds)
         self.min_off_time = 600  # Minimum time to leave ventilation off (seconds)
+        
+        # Night mode settings
+        self.night_mode_enabled = True
+        self.night_mode_start_hour = 23
+        self.night_mode_end_hour = 7
+        
+        # Settings dir for saving configuration
+        self.settings_dir = "data/ventilation"
+        os.makedirs(self.settings_dir, exist_ok=True)
+        
+        # Load night mode settings
+        self._load_night_mode_settings()
+    
+    def _load_night_mode_settings(self):
+        """Load night mode settings from file."""
+        night_settings_file = os.path.join(self.settings_dir, "night_mode_settings.json")
+        try:
+            if os.path.exists(night_settings_file):
+                with open(night_settings_file, 'r') as f:
+                    settings = json.load(f)
+                    self.night_mode_enabled = settings.get("enabled", True)
+                    self.night_mode_start_hour = settings.get("start_hour", 23)
+                    self.night_mode_end_hour = settings.get("end_hour", 7)
+                    logger.info(f"Loaded night mode settings: {self.night_mode_start_hour}:00 - {self.night_mode_end_hour}:00")
+        except Exception as e:
+            logger.error(f"Error loading night mode settings: {e}")
+    
+    def _save_night_mode_settings(self):
+        """Save night mode settings to file."""
+        night_settings_file = os.path.join(self.settings_dir, "night_mode_settings.json")
+        try:
+            settings = {
+                "enabled": self.night_mode_enabled,
+                "start_hour": self.night_mode_start_hour,
+                "end_hour": self.night_mode_end_hour
+            }
+            with open(night_settings_file, 'w') as f:
+                json.dump(settings, f, indent=2)
+            logger.info("Saved night mode settings")
+        except Exception as e:
+            logger.error(f"Error saving night mode settings: {e}")
+    
+    def _is_night_mode_active(self):
+        """Check if night mode is currently active."""
+        if not self.night_mode_enabled:
+            return False
+        
+        current_hour = datetime.now().hour
+        
+        # Handle case where night mode crosses midnight
+        if self.night_mode_start_hour > self.night_mode_end_hour:
+            # Night mode spans midnight (e.g., 23:00 - 7:00)
+            return current_hour >= self.night_mode_start_hour or current_hour < self.night_mode_end_hour
+        else:
+            # Night mode does not span midnight
+            return self.night_mode_start_hour <= current_hour < self.night_mode_end_hour
     
     def start(self):
         """Start the ventilation controller."""
@@ -68,6 +127,16 @@ class VentilationController:
             try:
                 # Skip if auto mode is disabled
                 if not self.auto_mode:
+                    time.sleep(self.scan_interval)
+                    continue
+                
+                # Check if night mode is active
+                if self._is_night_mode_active():
+                    # During night mode, only allow turning off ventilation
+                    current_status = self.pico_manager.get_ventilation_status()
+                    if current_status:
+                        logger.info("Night mode active - turning off ventilation")
+                        self._turn_ventilation_off("Night mode active")
                     time.sleep(self.scan_interval)
                     continue
                 
@@ -209,6 +278,18 @@ class VentilationController:
         logger.info(f"Automatic control {'enabled' if enabled else 'disabled'}")
         return True
     
+    def set_night_mode(self, enabled, start_hour=None, end_hour=None):
+        """Configure night mode settings."""
+        self.night_mode_enabled = enabled
+        if start_hour is not None:
+            self.night_mode_start_hour = start_hour
+        if end_hour is not None:
+            self.night_mode_end_hour = end_hour
+        
+        self._save_night_mode_settings()
+        logger.info(f"Night mode {'enabled' if enabled else 'disabled'}: {self.night_mode_start_hour}:00 - {self.night_mode_end_hour}:00")
+        return True
+    
     def get_status(self):
         """Get controller status information."""
         return {
@@ -217,7 +298,13 @@ class VentilationController:
             "temp_thresholds": self.temp_thresholds,
             "ventilation_status": self.pico_manager.get_ventilation_status(),
             "ventilation_speed": self.pico_manager.get_ventilation_speed(),
-            "last_action_time": self.last_action_time.isoformat() if self.last_action_time else None
+            "last_action_time": self.last_action_time.isoformat() if self.last_action_time else None,
+            "night_mode": {
+                "enabled": self.night_mode_enabled,
+                "start_hour": self.night_mode_start_hour,
+                "end_hour": self.night_mode_end_hour,
+                "currently_active": self._is_night_mode_active()
+            }
         }
     
     def set_thresholds(self, co2_low=None, co2_medium=None, co2_high=None):
