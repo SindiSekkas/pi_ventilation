@@ -1,0 +1,4 @@
+sensirion-i2c-driver
+sensirion-i2c-scd
+smbus2
+requests

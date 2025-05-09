@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+*/venv/
+*/env/
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and data files
+*.log
+*.csv
+*.json
+*.db
+*.sqlite3
+/bot_data/
+/csv_data/
+/feedback_data/
+/markov_model/
+
+# Secrets and credentials
+*.pem
+*.key
+.env
+
+# OS generated files
+.DS_Store
+Thumbs.db
