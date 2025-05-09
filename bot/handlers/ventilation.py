@@ -5,6 +5,57 @@ from telegram.ext import CommandHandler, ContextTypes, CallbackQueryHandler
 
 logger = logging.getLogger(__name__)
 
+def _get_detailed_status_text(pico_manager, controller, data_manager) -> str:
+    """Generates a detailed ventilation status string."""
+    # Get ventilation status
+    current_status = pico_manager.get_ventilation_status()
+    current_speed = pico_manager.get_ventilation_speed()
+    
+    # Get controller status
+    controller_status = controller.get_status() if controller else {"auto_mode": False}
+    auto_mode = controller_status.get("auto_mode", False) # Ensure default if key missing
+    last_action = controller_status.get("last_action", "None")
+    
+    status_text = "📋 Ventilation Status:\n"
+    status_text += f"State: {'ON' if current_status else 'OFF'}\n"
+    status_text += f"Speed: {current_speed}\n"
+    status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}\n"
+    status_text += f"Last Auto Action: {last_action}\n"
+    
+    # Night mode status
+    if controller and hasattr(controller, 'night_mode_enabled'):
+        night_mode_info = controller_status.get("night_mode", {})
+        status_text += f"Night Mode: {'Enabled' if night_mode_info.get('enabled', False) else 'Disabled'}"
+        if night_mode_info.get('enabled', False):
+            status_text += f" ({night_mode_info.get('start_hour', 23)}:00-{night_mode_info.get('end_hour', 7)}:00)"
+        if night_mode_info.get('currently_active', False):
+            status_text += " | Currently Active"
+        status_text += "\n"
+    
+    status_text += "\n" # Extra newline for separation
+    
+    if data_manager and hasattr(data_manager, 'latest_data'):
+        scd41_data = data_manager.latest_data.get("scd41", {})
+        room_data = data_manager.latest_data.get("room", {})
+
+        co2 = scd41_data.get("co2")
+        temp = scd41_data.get("temperature")
+        humidity = scd41_data.get("humidity")
+        occupants = room_data.get("occupants", "N/A")
+        
+        status_text += "📊 Current Conditions:\n"
+        if co2 is not None: status_text += f"🌬️ CO2: {co2} ppm\n"
+        else: status_text += "🌬️ CO2: N/A\n"
+        if temp is not None: status_text += f"🌡️ Temperature: {temp}°C\n"
+        else: status_text += "🌡️ Temperature: N/A\n"
+        if humidity is not None: status_text += f"💧 Humidity: {humidity}%\n"
+        else: status_text += "💧 Humidity: N/A\n"
+        status_text += f"👥 Occupants: {occupants}\n"
+    else:
+        status_text += "📊 Current Conditions: Data not available\n"
+        
+    return status_text
+
 async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /vent command to show ventilation control menu."""
     user = update.effective_user
@@ -18,21 +69,10 @@ async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     pico_manager = context.application.bot_data["pico_manager"]
     controller = context.application.bot_data.get("controller")
+    data_manager = context.application.bot_data.get("data_manager") # Fetch data_manager
     
-    # Get current ventilation status
-    current_status = pico_manager.get_ventilation_status()
-    current_speed = pico_manager.get_ventilation_speed()
+    # Get current auto_mode status for button text
     auto_mode = controller.get_status()["auto_mode"] if controller else False
-    
-    # Get night mode status if available
-    night_mode_info = None
-    if controller and hasattr(controller, 'night_mode_enabled'):
-        night_mode_info = {
-            "enabled": controller.night_mode_enabled,
-            "start_hour": controller.night_mode_start_hour,
-            "end_hour": controller.night_mode_end_hour,
-            "currently_active": controller._is_night_mode_active()
-        }
     
     # Create ventilation control menu
     keyboard = []
@@ -42,7 +82,7 @@ async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton(auto_text, callback_data="vent_auto_toggle")])
     
     # Add night mode settings
-    if night_mode_info:
+    if controller and hasattr(controller, 'night_mode_enabled'): # Check if controller supports night mode
         night_text = "🌙 Night Mode Settings"
         keyboard.append([InlineKeyboardButton(night_text, callback_data="vent_night_settings")])
     
@@ -67,17 +107,11 @@ async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    status_text = f"Current: {'ON' if current_status else 'OFF'} ({current_speed})\n"
-    status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}\n"
-    if night_mode_info:
-        status_text += f"Night Mode: {'Enabled' if night_mode_info['enabled'] else 'Disabled'}"
-        if night_mode_info['enabled']:
-            status_text += f" ({night_mode_info['start_hour']}:00-{night_mode_info['end_hour']}:00)"
-        if night_mode_info['currently_active']:
-            status_text += " 🌙 Active"
+    # Use the helper function for detailed status text
+    detailed_status_text = _get_detailed_status_text(pico_manager, controller, data_manager)
     
     await update.message.reply_text(
-        f"🌡️ Ventilation Control\n\n{status_text}",
+        f"🌡️ Ventilation Control\n\n{detailed_status_text}",
         reply_markup=reply_markup
     )
 
@@ -96,45 +130,8 @@ async def vent_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     controller = context.application.bot_data.get("controller")
     data_manager = context.application.bot_data.get("data_manager")
     
-    # Get ventilation status
-    current_status = pico_manager.get_ventilation_status()
-    current_speed = pico_manager.get_ventilation_speed()
-    
-    # Get controller status
-    controller_status = controller.get_status() if controller else {"auto_mode": False}
-    auto_mode = controller_status["auto_mode"]
-    last_action = controller_status.get("last_action", "None")
-    
-    # Get sensor data
-    status_text = "📋 Ventilation Status:\n"
-    status_text += f"State: {'ON' if current_status else 'OFF'}\n"
-    status_text += f"Speed: {current_speed}\n"
-    status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}\n"
-    status_text += f"Last Auto Action: {last_action}\n"
-    
-    # Night mode status
-    if controller and hasattr(controller, 'night_mode_enabled'):
-        night_mode_info = controller_status.get("night_mode", {})
-        status_text += f"Night Mode: {'Enabled' if night_mode_info.get('enabled', False) else 'Disabled'}"
-        if night_mode_info.get('enabled', False):
-            status_text += f" ({night_mode_info.get('start_hour', 23)}:00-{night_mode_info.get('end_hour', 7)}:00)"
-        if night_mode_info.get('currently_active', False):
-            status_text += " | Currently Active"
-        status_text += "\n"
-    
-    status_text += "\n"
-    
-    if data_manager:
-        co2 = data_manager.latest_data["scd41"]["co2"]
-        temp = data_manager.latest_data["scd41"]["temperature"]
-        humidity = data_manager.latest_data["scd41"]["humidity"]
-        occupants = data_manager.latest_data["room"]["occupants"]
-        
-        status_text += "📊 Current Conditions:\n"
-        if co2: status_text += f"🌬️ CO2: {co2} ppm\n"
-        if temp: status_text += f"🌡️ Temperature: {temp}°C\n"
-        if humidity: status_text += f"💧 Humidity: {humidity}%\n"
-        status_text += f"👥 Occupants: {occupants}\n"
+    # Use the helper function for detailed status text
+    status_text = _get_detailed_status_text(pico_manager, controller, data_manager)
     
     await update.message.reply_text(status_text)
 
@@ -242,15 +239,18 @@ async def handle_vent_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             await handle_night_mode_callbacks(query, controller, action[6:])
         
         elif action == "status":
-            # Show status
-            current_status = pico_manager.get_ventilation_status()
-            current_speed = pico_manager.get_ventilation_speed()
-            auto_mode = controller.get_status()["auto_mode"] if controller else False
+            # Show detailed status using the helper function
+            data_manager = context.application.bot_data.get("data_manager")
+            detailed_status_text = _get_detailed_status_text(pico_manager, controller, data_manager)
             
-            status_text = f"Current: {'ON' if current_status else 'OFF'} ({current_speed})\n"
-            status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}"
+            keyboard = [[InlineKeyboardButton("⬅️ Back to Ventilation Menu", callback_data="vent_show_menu_from_status")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await query.edit_message_text(f"📊 Status\n\n{status_text}")
+            await query.edit_message_text(detailed_status_text, reply_markup=reply_markup)
+
+        elif action == "show_menu_from_status":
+            # This action is called from the "Back" button on the detailed status page
+            await show_vent_menu(query.message, context)
         
         elif action == "main_menu":
             # Return to main menu
@@ -405,21 +405,10 @@ async def show_vent_menu(message, context):
     """Show ventilation menu after a delay."""
     pico_manager = context.application.bot_data["pico_manager"]
     controller = context.application.bot_data.get("controller")
+    data_manager = context.application.bot_data.get("data_manager") # Fetch data_manager
     
-    # Get current ventilation status
-    current_status = pico_manager.get_ventilation_status()
-    current_speed = pico_manager.get_ventilation_speed()
+    # Get current auto_mode status for button text
     auto_mode = controller.get_status()["auto_mode"] if controller else False
-    
-    # Get night mode status if available
-    night_mode_info = None
-    if controller and hasattr(controller, 'night_mode_enabled'):
-        night_mode_info = {
-            "enabled": controller.night_mode_enabled,
-            "start_hour": controller.night_mode_start_hour,
-            "end_hour": controller.night_mode_end_hour,
-            "currently_active": controller._is_night_mode_active()
-        }
     
     # Create ventilation control menu
     keyboard = []
@@ -429,7 +418,7 @@ async def show_vent_menu(message, context):
     keyboard.append([InlineKeyboardButton(auto_text, callback_data="vent_auto_toggle")])
     
     # Add night mode settings
-    if night_mode_info:
+    if controller and hasattr(controller, 'night_mode_enabled'): # Check if controller supports night mode
         night_text = "🌙 Night Mode Settings"
         keyboard.append([InlineKeyboardButton(night_text, callback_data="vent_night_settings")])
     
@@ -454,17 +443,11 @@ async def show_vent_menu(message, context):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    status_text = f"Current: {'ON' if current_status else 'OFF'} ({current_speed})\n"
-    status_text += f"Auto Mode: {'Enabled' if auto_mode else 'Disabled'}\n"
-    if night_mode_info:
-        status_text += f"Night Mode: {'Enabled' if night_mode_info['enabled'] else 'Disabled'}"
-        if night_mode_info['enabled']:
-            status_text += f" ({night_mode_info['start_hour']}:00-{night_mode_info['end_hour']}:00)"
-        if night_mode_info['currently_active']:
-            status_text += " 🌙 Active"
+    # Use the helper function for detailed status text
+    detailed_status_text = _get_detailed_status_text(pico_manager, controller, data_manager)
     
     await message.edit_text(
-        f"🌡️ Ventilation Control\n\n{status_text}",
+        f"🌡️ Ventilation Control\n\n{detailed_status_text}",
         reply_markup=reply_markup
     )
 
