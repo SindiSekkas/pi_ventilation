@@ -4,6 +4,7 @@ import sys
 import time
 import logging
 import threading
+import subprocess
 from datetime import datetime
 
 # Setup logging before imports
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Import components
 from config.settings import (
     MEASUREMENT_INTERVAL, INIT_MEASUREMENTS, 
-    PICO_IP, DATA_DIR, CSV_DIR
+    PICO_IP, DATA_DIR, CSV_DIR, BOT_TOKEN
 )
 from sensors.scd41_manager import SCD41Manager
 from sensors.bmp280 import BMP280
@@ -32,6 +33,18 @@ from control.ventilation_controller import VentilationController
 from control.markov_controller import MarkovController
 from presence.device_manager import DeviceManager
 from presence.presence_controller import PresenceController
+
+def run_bot(pico_manager, controller, data_manager):
+    """Run the Telegram bot in a separate process."""
+    try:
+        # Import bot main
+        from bot.main import main as bot_main
+        
+        # Run bot with passed components
+        bot_main(pico_manager, controller, data_manager)
+    except Exception as e:
+        logger.error(f"Error in bot process: {e}", exc_info=True)
+        # Don't exit, just log the error and continue
 
 def main():
     """Main application entry point."""
@@ -89,6 +102,20 @@ def main():
         else:
             logger.error("Failed to start Markov controller")
         
+        # Start bot if token is configured
+        bot_thread = None
+        if BOT_TOKEN:
+            logger.info("Starting Telegram bot")
+            bot_thread = threading.Thread(
+                target=run_bot, 
+                args=(pico_manager, markov_controller, data_manager),
+                daemon=True
+            )
+            bot_thread.start()
+            logger.info("Telegram bot started")
+        else:
+            logger.warning("BOT_TOKEN not configured, bot will not start")
+        
         logger.info("Ventilation system started successfully")
         
         # Run indefinitely to keep main thread alive
@@ -97,6 +124,15 @@ def main():
                 time.sleep(1)
         except KeyboardInterrupt:
             logger.info("Shutting down ventilation system")
+            
+            # Stop controllers
+            markov_controller.stop()
+            presence_controller.stop()
+            
+            # Stop bot thread if it exists
+            if bot_thread and bot_thread.is_alive():
+                logger.info("Waiting for bot to stop...")
+                # No direct way to stop bot gracefully, let daemon thread die
         
         return 0
         
