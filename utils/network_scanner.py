@@ -8,48 +8,85 @@ logger = logging.getLogger(__name__)
 
 def scan_network():
     """
-    Scan local network for devices using arp-scan.
-    
-    Returns:
-        list: List of tuples containing (mac, ip, vendor) of discovered devices
+    Scan local network for devices using BOTH arp-scan AND ARP table.
+    Returns combined list of all found devices.
     """
+    devices = {}  # Dictionary to prevent duplicates by MAC address
+    
+    # PART 1: ARP-SCAN
     try:
-        # Primary method: sudo arp-scan
-        logger.info("Starting network scan with sudo arp-scan")
+        logger.info("Running arp-scan to find devices")
         result = subprocess.run(
             ["sudo", "arp-scan", "--localnet"], 
             capture_output=True, text=True,
-            timeout=30  # Set timeout to prevent hanging
+            timeout=30
         )
         
-        # Extract MAC addresses, IPs, and vendors
-        online_devices = []
-        seen_macs = set()  # To handle duplicate entries
-        
         for line in result.stdout.splitlines():
-            # Match IP, MAC address, and vendor pattern
             match = re.search(r'(\d+\.\d+\.\d+\.\d+)\s+([0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2})\s+(.*?)(?:\s+\(DUP: \d+\))?$', line)
             if match:
                 ip = match.group(1)
                 mac = match.group(2).lower()
                 vendor = match.group(3).strip()
                 
-                # Skip duplicates
-                if mac in seen_macs:
-                    continue
-                    
-                seen_macs.add(mac)
-                online_devices.append((mac, ip, vendor))
-        
-        logger.info(f"Network scan found {len(online_devices)} devices")
-        return online_devices
-    
-    except subprocess.TimeoutExpired:
-        logger.error("Network scan timed out")
-        return fallback_scan()
+                devices[mac] = (mac, ip, vendor)
+                
+        logger.info(f"ARP-SCAN found {len(devices)} devices")
     except Exception as e:
-        logger.error(f"Error scanning network: {e}")
-        return fallback_scan()
+        logger.error(f"Error in arp-scan: {e}")
+    
+    # PART 2: READ /proc/net/arp FILE
+    try:
+        logger.info("Reading /proc/net/arp file")
+        with open('/proc/net/arp', 'r') as f:
+            lines = f.readlines()[1:]  # Skip header
+            
+        for line in lines:
+            parts = line.strip().split()
+            if len(parts) >= 4 and parts[3] != "00:00:00:00:00:00":
+                ip = parts[0]
+                mac = parts[3].lower()
+                
+                # Only add if not already found
+                if mac not in devices:
+                    logger.info(f"Found additional device in ARP table: {mac} ({ip})")
+                    devices[mac] = (mac, ip, "Unknown")
+    except Exception as e:
+        logger.error(f"Error reading /proc/net/arp: {e}")
+    
+    # PART 3: RUN ARP COMMAND
+    try:
+        logger.info("Running 'arp -a' command")
+        result = subprocess.run(
+            ["arp", "-a"], 
+            capture_output=True, text=True,
+            timeout=5
+        )
+        
+        # Parse output to find MAC addresses
+        for line in result.stdout.splitlines():
+            # Try to extract IP and MAC
+            match = re.search(r'\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-fA-F:]{17})', line)
+            if match:
+                ip = match.group(1)
+                mac = match.group(2).lower()
+                
+                # Only add if not already found
+                if mac not in devices:
+                    logger.info(f"Found additional device via 'arp -a': {mac} ({ip})")
+                    devices[mac] = (mac, ip, "Unknown")
+    except Exception as e:
+        logger.error(f"Error running arp command: {e}")
+    
+    # Convert dictionary to list for return
+    device_list = list(devices.values())
+    logger.info(f"TOTAL: Found {len(device_list)} unique devices via all methods")
+    
+    # Print all found devices for debugging
+    for mac, ip, vendor in device_list:
+        logger.debug(f"FOUND DEVICE: MAC={mac}, IP={ip}, Vendor={vendor}")
+    
+    return device_list
 
 def fallback_scan():
     """Fallback method: read ARP table directly."""

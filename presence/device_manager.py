@@ -66,7 +66,57 @@ class DeviceManager:
         except Exception as e:
             logger.error(f"Error saving devices: {e}")
             return False
-    
+
+    def _update_active_hours(self, device, current_time, is_online):
+        """
+        Update the typical active hours for a device.
+        
+        Args:
+            device: Device object
+            current_time: Current time
+            is_online: Whether device is currently online
+        """
+        # Only track active hours for devices that are online
+        if not is_online:
+            return
+            
+        # Get current hour (0-23)
+        hour = current_time.hour
+        
+        # Check if this hour is already in typical active hours
+        hour_exists = False
+        for hour_range in device.typical_active_hours:
+            start_hour, end_hour = hour_range
+            if start_hour <= hour <= end_hour:
+                hour_exists = True
+                break
+        
+        # If not, add it
+        if not hour_exists:
+            # Start with just this hour
+            new_range = [hour, hour]
+            
+            # Check if we can extend an existing range
+            merged = False
+            for i, hour_range in enumerate(device.typical_active_hours):
+                start_hour, end_hour = hour_range
+                
+                # If this hour is adjacent to an existing range, extend the range
+                if start_hour - 1 == hour:
+                    device.typical_active_hours[i][0] = hour
+                    merged = True
+                    break
+                elif end_hour + 1 == hour:
+                    device.typical_active_hours[i][1] = hour
+                    merged = True
+                    break
+            
+            # If not merged with an existing range, add as new range
+            if not merged:
+                device.typical_active_hours.append(new_range)
+        
+        logger.debug(f"Updated typical active hours for {device.name}: {device.typical_active_hours}")
+
     def update_device_status(self, mac, is_online, current_time=None):
         """
         Update device status based on network scan with enhanced detection.
@@ -105,19 +155,13 @@ class DeviceManager:
                 device.status = "active"
                 
             else:
-                # Try additional detection methods for important devices
-                if (device.device_type == DeviceType.PHONE.value and 
-                    device.count_for_presence and device.last_ip):
-                    
-                    # Try additional methods to detect the device
-                    is_present, method, _ = check_device_presence(
-                        mac, 
-                        device.last_ip, 
-                        methods=['arp_table', 'ping']
-                    )
+                # Try checking ARP table for all devices
+                if device.last_ip:
+                    # Try ARP table check first
+                    is_present = self.check_arp_table(mac)
                     
                     if is_present:
-                        logger.info(f"Device {mac} ({device.name}) detected via {method}")
+                        logger.info(f"Device {mac} ({device.name}) found in ARP table")
                         # Mark as online and update timestamp
                         device.record_connection()
                         device.offline_count = 0
@@ -131,6 +175,26 @@ class DeviceManager:
                             self._save_devices()
                         return status_changed
                 
+                # Additional checks only for important devices (phones)
+                if (device.device_type == DeviceType.PHONE.value and 
+                    device.count_for_presence and device.last_ip):
+                    
+                    # Try additional methods to detect the device (ping)
+                    if ping_device(device.last_ip):
+                        logger.info(f"Device {mac} ({device.name}) responded to ping")
+                        # Mark as online and update timestamp
+                        device.record_connection()
+                        device.offline_count = 0
+                        
+                        if device.status != "active":
+                            device.status = "active"
+                            status_changed = True
+                        
+                        # Return early - device is actually present
+                        if status_changed:
+                            self._save_devices()
+                        return status_changed
+            
                 # Device is offline - increment counter
                 device.offline_count += 1
                 
@@ -150,27 +214,49 @@ class DeviceManager:
                         device.record_connection()
                         logger.info(f"Successfully woken device {mac} ({device.name})")
                         status_changed = True
-                
-                # Check if we should mark device as inactive
-                offline_threshold = self._get_offline_threshold(device, now)
-                
-                if device.offline_count > offline_threshold and device.status == "active":
-                    # Mark device as inactive
-                    device.status = "inactive"
-                    device.record_disconnection()
-                    status_changed = True
-                    logger.info(f"Device {mac} ({device.name}) is now inactive after {device.offline_count} missed scans")
             
-            # Save on status change
-            if status_changed:
-                self._save_devices()
-                
-                # Update typical active hours on status change
-                if device.device_type == DeviceType.PHONE.value:
-                    self._update_active_hours(device, now, is_online)
+            # Check if we should mark device as inactive
+            offline_threshold = self._get_offline_threshold(device, now)
             
-            return status_changed
-    
+            if device.offline_count > offline_threshold and device.status == "active":
+                # Mark device as inactive
+                device.status = "inactive"
+                device.record_disconnection()
+                status_changed = True
+                logger.info(f"Device {mac} ({device.name}) is now inactive after {device.offline_count} missed scans")
+        
+        # Save on status change
+        if status_changed:
+            self._save_devices()
+            
+            # Update typical active hours on status change
+            if device.device_type == DeviceType.PHONE.value:
+                self._update_active_hours(device, now, is_online)
+        
+        return status_changed
+
+    def check_arp_table(self, mac):
+        """
+        Check if a MAC address is present in the system's ARP table.
+        
+        Args:
+            mac: MAC address to check
+        
+        Returns:
+            bool: Whether the device is found in the ARP table
+        """
+        try:
+            # Use the check_device_presence function but only with arp_table method
+            is_present, method, _ = check_device_presence(
+                mac, 
+                None,  # IP not needed for ARP table check
+                methods=['arp_table']
+            )
+            return is_present
+        except Exception as e:
+            logger.error(f"Error checking ARP table for {mac}: {e}")
+            return False
+
     def _get_offline_threshold(self, device, current_time):
         """
         Get the threshold for marking a device offline based on type and time.
@@ -284,8 +370,8 @@ class DeviceManager:
         
         return False
 
-        def add_device(self, mac, name=None, owner=None, device_type="unknown", vendor=None, 
-                count_for_presence=False, confirmation_status="unconfirmed"):
+    def add_device(self, mac, name=None, owner=None, device_type="unknown", vendor=None, 
+                  count_for_presence=False, confirmation_status="unconfirmed"):
         """
         Add a new device to the device manager.
         
@@ -332,21 +418,25 @@ class DeviceManager:
                 )
                 self.devices[mac] = device
                 logger.info(f"Added new device: {device.name} ({device.mac})")
-            
-            # Save changes to file
-            self._save_devices()
-            
-            # Notify if callback is registered
-            if self.notification_callback and mac not in self.devices:
-                self.notification_callback("new_device", 
-                                        device_name=device.name,
-                                        device_mac=mac,
-                                        device_type=device_type,
-                                        vendor=vendor,
-                                        confidence=device.confidence_score)
-            
-            return True
-            
+        
+        # Save changes to file
+        self._save_devices()
+        
+        # Notify if callback is registered
+        if self.notification_callback and mac not in self.devices:
+            self.notification_callback("new_device", 
+                                    device_name=device.name,
+                                    device_mac=mac,
+                                    device_type=device_type,
+                                    vendor=vendor,
+                                    confidence=device.confidence_score)
+        
+        return True
+
+    def set_notification_callback(self, callback):
+        """Set or update the notification callback function."""
+        self.notification_callback = callback
+
     def calculate_people_present(self):
         """
         Calculate number of people present with enhanced reliability.
