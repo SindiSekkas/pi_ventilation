@@ -28,6 +28,7 @@ from sensors.bmp280 import BMP280
 from sensors.data_manager import DataManager
 from sensors.reader import SensorReader
 from utils.pico_manager import PicoManager
+from control.ventilation_controller import VentilationController
 
 def main():
     """Main application entry point."""
@@ -56,6 +57,18 @@ def main():
         if not sensor_reader.start():
             logger.error("Failed to start sensor reader")
             return 1
+            
+        # Initialize ventilation controller
+        ventilation_controller = VentilationController(
+            data_manager=data_manager,
+            pico_manager=pico_manager
+        )
+        
+        # Start ventilation controller
+        if ventilation_controller.start():
+            logger.info("Ventilation controller started")
+        else:
+            logger.error("Failed to start ventilation controller")
         
         logger.info("Ventilation system started successfully")
         
