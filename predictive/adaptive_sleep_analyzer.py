@@ -6,6 +6,7 @@ import os
 import json
 import logging
 import numpy as np
+import threading
 from datetime import datetime, timedelta, time
 from collections import defaultdict
 
@@ -66,6 +67,10 @@ class AdaptiveSleepAnalyzer:
         
         # Initialize the daily recording
         self._initialize_daily_tracking()
+        
+        # Thread control
+        self.running = False
+        self.thread = None
 
     def _load_or_initialize_patterns(self):
         """Load existing sleep patterns or initialize a new data structure."""
@@ -877,3 +882,37 @@ class AdaptiveSleepAnalyzer:
         except Exception as e:
             logger.error(f"Error getting sleep pattern summary: {e}")
             return {"error": str(e)}
+            
+    def start(self):
+        """Start the adaptive sleep analyzer in a separate thread."""
+        if self.thread is not None and self.thread.is_alive():
+            logger.warning("Adaptive sleep analyzer already running")
+            return False
+            
+        self.running = True
+        self.thread = threading.Thread(target=self._analysis_loop, daemon=True)
+        self.thread.start()
+        logger.info("Started adaptive sleep analyzer")
+        return True
+        
+    def stop(self):
+        """Stop the adaptive sleep analyzer."""
+        self.running = False
+        logger.info("Stopped adaptive sleep analyzer")
+        return True
+        
+    def _analysis_loop(self):
+        """Main loop for sleep pattern analysis."""
+        try:
+            while self.running:
+                # Update CO2 data and perform analysis
+                self.update_co2_data()
+                
+                # Sleep for 5 minutes
+                # Using 100 x 3 second intervals to allow for quicker shutdown
+                for _ in range(100):
+                    if not self.running:
+                        break
+                    time.sleep(3)
+        except Exception as e:
+            logger.error(f"Error in adaptive sleep analyzer loop: {e}")

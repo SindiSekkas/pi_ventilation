@@ -17,6 +17,7 @@ from bot.handlers.commands import setup_command_handlers
 from bot.handlers.messages import setup_message_handlers
 from bot.user_auth import UserAuth
 from bot.handlers.ventilation import setup_ventilation_handlers, handle_vent_callback
+from bot.handlers.sleep_patterns import setup_sleep_handlers
 
 # Setup logging
 logging.basicConfig(
@@ -29,7 +30,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def async_main(pico_manager=None, controller=None, data_manager=None):
+async def async_main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None):
     """Async main bot function."""
     # Initialize user authentication
     user_auth = UserAuth(DATA_DIR)
@@ -67,11 +68,13 @@ async def async_main(pico_manager=None, controller=None, data_manager=None):
     app.bot_data["pico_manager"] = pico_manager
     app.bot_data["controller"] = controller
     app.bot_data["data_manager"] = data_manager
+    app.bot_data["sleep_analyzer"] = sleep_analyzer
     
     # Setup handlers
     setup_command_handlers(app)
     setup_message_handlers(app)
     setup_ventilation_handlers(app)
+    setup_sleep_handlers(app)
     
     # Start polling with specific settings based on thread
     logger.info("Bot starting polling...")
@@ -95,7 +98,7 @@ async def async_main(pico_manager=None, controller=None, data_manager=None):
             await app.stop()
             await app.shutdown()
 
-def main(pico_manager=None, controller=None, data_manager=None):
+def main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None):
     """Start the bot with proper event loop handling."""
     try:
         logger.info("Starting telegram bot")
@@ -107,10 +110,10 @@ def main(pico_manager=None, controller=None, data_manager=None):
         # Run the bot with the appropriate mode based on thread
         if threading.current_thread() is threading.main_thread():
             # In main thread, we can use run_until_complete
-            loop.run_until_complete(async_main(pico_manager, controller, data_manager))
+            loop.run_until_complete(async_main(pico_manager, controller, data_manager, sleep_analyzer))
         else:
             # In a separate thread, run without blocking
-            loop.create_task(async_main(pico_manager, controller, data_manager))
+            loop.create_task(async_main(pico_manager, controller, data_manager, sleep_analyzer))
             loop.run_forever()
         
     except Exception as e:

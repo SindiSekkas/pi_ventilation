@@ -33,15 +33,16 @@ from control.ventilation_controller import VentilationController
 from control.markov_controller import MarkovController
 from presence.device_manager import DeviceManager
 from presence.presence_controller import PresenceController
+from predictive.adaptive_sleep_analyzer import AdaptiveSleepAnalyzer
 
-def run_bot(pico_manager, controller, data_manager):
+def run_bot(pico_manager, controller, data_manager, sleep_analyzer):
     """Run the Telegram bot in a separate process."""
     try:
         # Import bot main
         from bot.main import main as bot_main
         
         # Run bot with passed components
-        bot_main(pico_manager, controller, data_manager)
+        bot_main(pico_manager, controller, data_manager, sleep_analyzer)
     except Exception as e:
         logger.error(f"Error in bot process: {e}", exc_info=True)
         # Don't exit, just log the error and continue
@@ -101,6 +102,18 @@ def main():
             logger.info("Markov controller started")
         else:
             logger.error("Failed to start Markov controller")
+            
+        # Initialize adaptive sleep analyzer
+        sleep_analyzer = AdaptiveSleepAnalyzer(
+            data_manager=data_manager,
+            controller=markov_controller
+        )
+        
+        # Start adaptive sleep analyzer
+        if sleep_analyzer.start():
+            logger.info("Adaptive sleep analyzer started")
+        else:
+            logger.error("Failed to start adaptive sleep analyzer")
         
         # Start bot if token is configured
         bot_thread = None
@@ -108,7 +121,7 @@ def main():
             logger.info("Starting Telegram bot")
             bot_thread = threading.Thread(
                 target=run_bot, 
-                args=(pico_manager, markov_controller, data_manager),
+                args=(pico_manager, markov_controller, data_manager, sleep_analyzer),
                 daemon=True
             )
             bot_thread.start()
@@ -128,6 +141,7 @@ def main():
             # Stop controllers
             markov_controller.stop()
             presence_controller.stop()
+            sleep_analyzer.stop()
             
             # Stop bot thread if it exists
             if bot_thread and bot_thread.is_alive():

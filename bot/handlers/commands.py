@@ -23,7 +23,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Show menu for trusted users
         keyboard = [
             [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
-            [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")]
+            [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")],
+            [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
@@ -55,6 +56,7 @@ Available commands:
 /help - Show this help
 /adduser - Start the process to add a new trusted user
 /cancel - Cancel the current operation
+/sleep - Show sleep pattern analysis and night mode settings
 
 Ventilation commands:
 /vent - Show ventilation control menu
@@ -65,6 +67,11 @@ Ventilation Control:
 - Set ventilation speed (low/medium/max)
 - Toggle auto mode on/off
 - View current status and sensor readings
+
+Sleep Analysis:
+- View detected sleep patterns
+- Check night mode settings
+- See recent sleep time adjustments
     """
     await update.message.reply_text(help_text)
     logger.info(f"Help command from user {user_id}")
@@ -149,7 +156,8 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         # Return to main menu
         keyboard = [
             [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
-            [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")]
+            [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")],
+            [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -163,6 +171,16 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         from bot.handlers.ventilation import show_vent_menu
         await show_vent_menu(query.message, context)
         logger.info(f"User {user_id} opened ventilation menu")
+        
+    elif query.data == "sleep_refresh":
+        from bot.handlers.sleep_patterns import handle_sleep_callback
+        await handle_sleep_callback(update, context)
+        logger.info(f"User {user_id} refreshed sleep analysis menu")
+        
+    elif query.data == "night_settings":
+        from bot.handlers.sleep_patterns import handle_sleep_callback
+        await handle_sleep_callback(update, context)
+        logger.info(f"User {user_id} accessed night settings from sleep menu")
 
 def setup_command_handlers(app):
     """Register all command handlers."""
@@ -170,5 +188,5 @@ def setup_command_handlers(app):
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("adduser", add_user_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
-    app.add_handler(CallbackQueryHandler(handle_button_callback, pattern='^(add_user|cancel_add_user|vent_menu)$'))
+    app.add_handler(CallbackQueryHandler(handle_button_callback, pattern='^(add_user|cancel_add_user|vent_menu|sleep_refresh|night_settings)$'))
     logger.info("Command handlers registered")
