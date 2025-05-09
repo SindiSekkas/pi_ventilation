@@ -43,4 +43,26 @@ CSV_DIR = os.path.join(DATA_DIR, "csv")
 
 # Skip initialisation measurements
 SKIP_INITIALIZATION = True
-INIT_MEASUREMENTS = 0 if SKIP_INITIALIZATION else 5 
+INIT_MEASUREMENTS = 0 if SKIP_INITIALIZATION else 5
+
+# Bot configuration
+try:
+    from dotenv import load_dotenv
+    
+    # Load bot environment variables
+    bot_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bot", ".env")
+    if os.path.exists(bot_env_path):
+        load_dotenv(bot_env_path)
+    else:
+        logger.warning(f"Bot .env file not found at {bot_env_path}")
+    
+    # Bot settings
+    BOT_TOKEN = os.environ.get("BOT_TOKEN")
+    ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
+    
+    if not BOT_TOKEN:
+        logger.warning("BOT_TOKEN not found in environment variables")
+except ImportError:
+    logger.warning("python-dotenv not installed, bot features will not work")
+    BOT_TOKEN = None
+    ADMIN_ID = None
