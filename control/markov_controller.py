@@ -193,6 +193,28 @@ class MarkovController:
         """Create a unique key for a state."""
         return f"{co2_level}_{temp_level}_{occupancy}_{time_of_day}"
     
+    def _parse_state_key(self, state_key_str: str) -> dict:
+        """
+        Parse a state key string into its components.
+        
+        Args:
+            state_key_str: State key string in format "co2_level_temp_level_occupancy_timeofday"
+        
+        Returns:
+            dict: Dictionary with state components
+        """
+        parts = state_key_str.split('_')
+        if len(parts) < 4:
+            logger.warning(f"Invalid state key format: {state_key_str}")
+            return {}
+        
+        return {
+            "co2_level": parts[0],
+            "temp_level": parts[1],
+            "occupancy": parts[2],
+            "time_of_day": parts[3] if len(parts) > 3 else "day"
+        }
+    
     def _load_or_initialize_model(self):
         """Load existing model or initialize a new one."""
         if os.path.exists(self.model_file):
@@ -343,6 +365,85 @@ class MarkovController:
             except Exception as e:
                 logger.error(f"Error in Markov control loop: {e}")
                 time.sleep(self.scan_interval)
+    
+    def _get_current_target_thresholds(self, occupants: int) -> tuple[dict, dict]:
+        """
+        Get current target thresholds based on occupancy level.
+        
+        Args:
+            occupants: Number of people currently in the room
+        
+        Returns:
+            tuple: (active_co2_thresholds, active_temp_thresholds)
+        """
+        if occupants == 0:
+            # Empty home - use adaptive thresholds based on pattern analysis
+            if self.occupancy_analyzer:
+                expected_duration = self.occupancy_analyzer.get_expected_empty_duration(datetime.now())
+                next_return = self.occupancy_analyzer.get_next_expected_return_time(datetime.now())
+                
+                if expected_duration and expected_duration > timedelta(hours=3):
+                    # Long absence expected - use very energy-saving thresholds
+                    active_co2_thr = self.VERY_LOW_ENERGY_THRESHOLDS_CO2.copy()
+                    active_temp_thr = self.VERY_LOW_ENERGY_THRESHOLDS_TEMP.copy()
+                    logger.debug(f"Using very energy-saving thresholds - expected absence: {expected_duration}")
+                    
+                elif next_return and next_return - datetime.now() < timedelta(hours=1):
+                    # Return expected soon - prepare the environment
+                    active_co2_thr = self.PREPARE_FOR_RETURN_THRESHOLDS_CO2.copy()
+                    active_temp_thr = self.PREPARE_FOR_RETURN_THRESHOLDS_TEMP.copy()
+                    logger.debug(f"Using return-prep thresholds - expected return: {next_return}")
+                    
+                else:
+                    # Uncertain prediction - use standard empty home thresholds
+                    active_co2_thr = self.default_empty_home_co2_thresholds.copy()
+                    active_temp_thr = self.default_empty_home_temp_thresholds.copy()
+                    logger.debug("Using standard empty home thresholds")
+            else:
+                # No analyzer - use standard empty home thresholds
+                active_co2_thr = self.default_empty_home_co2_thresholds.copy()
+                active_temp_thr = self.default_empty_home_temp_thresholds.copy()
+                logger.debug("Using standard empty home thresholds")
+        
+        else:
+            # Home occupied - use compromise preferences from all registered users
+            try:
+                # Get all user preferences
+                all_user_preferences = self.preference_manager.get_all_user_preferences()
+                
+                if all_user_preferences and self.preference_manager:
+                    # Calculate compromise based on all registered users
+                    all_user_ids = list(all_user_preferences.keys())
+                    compromise = self.preference_manager.calculate_compromise_preference(all_user_ids)
+                    
+                    # Update CO2 thresholds
+                    active_co2_thr = {
+                        "low_max": int(compromise.co2_threshold * 0.8),  # Low threshold at 80% of compromise
+                        "medium_max": compromise.co2_threshold           # Medium threshold at compromise value
+                    }
+                    
+                    # Update temperature thresholds
+                    active_temp_thr = {
+                        "low_max": compromise.temp_min,
+                        "medium_max": compromise.temp_max
+                    }
+                    
+                    logger.debug(f"Using compromise thresholds: CO2={active_co2_thr}, "
+                                f"Temp={active_temp_thr}, Effectiveness={compromise.effectiveness_score:.2f}")
+                    
+                else:
+                    # No registered users - use default thresholds
+                    active_co2_thr = self.co2_thresholds.copy()
+                    active_temp_thr = self.temp_thresholds.copy()
+                    logger.debug("No registered users found, using default thresholds")
+                    
+            except Exception as e:
+                logger.error(f"Error calculating compromise preferences: {e}")
+                logger.debug("Falling back to default thresholds")
+                active_co2_thr = self.co2_thresholds.copy()
+                active_temp_thr = self.temp_thresholds.copy()
+        
+        return active_co2_thr, active_temp_thr
     
     def _update_thresholds_for_occupancy(self, occupants):
         """
@@ -498,6 +599,15 @@ class MarkovController:
         if not self.current_state:
             return Action.TURN_OFF.value
         
+        # Get current occupancy for threshold determination
+        current_occupants = self.data_manager.latest_data["room"]["occupants"]
+        
+        # Get current target thresholds based on occupancy
+        active_co2_thr, active_temp_thr = self._get_current_target_thresholds(current_occupants)
+        
+        # Debug: Print current transition model for this state
+        logger.info(f"DEBUG: Current state transitions: {self.transition_model[self.current_state]}")
+        
         # Check for proactive ventilation if analyzer is available
         if self.occupancy_analyzer and self.auto_mode:
             next_return = self.occupancy_analyzer.get_next_expected_return_time(datetime.now())
@@ -511,7 +621,7 @@ class MarkovController:
                     co2 = self.data_manager.latest_data["scd41"]["co2"]
                     
                     # Check if environment needs preparation
-                    if co2 and co2 > self.PREPARE_FOR_RETURN_THRESHOLDS_CO2["medium_max"]:
+                    if co2 and co2 > active_co2_thr["medium_max"]:
                         # Get current ventilation status
                         current_status = self.pico_manager.get_ventilation_status()
                         current_speed = self.pico_manager.get_ventilation_speed()
@@ -536,41 +646,95 @@ class MarkovController:
         best_action = None
         best_value = float('-inf')
         
-        for action in self.transition_model[self.current_state]:
+        # Debug all action values
+        action_values = {}
+        
+        for action_key_str in self.transition_model[self.current_state]:
             # Calculate expected value of this action
-            expected_value = 0
+            action_value = 0
             
-            for next_state, probability in self.transition_model[self.current_state][action].items():
-                # Simple value function: reward CO2 level improvements
-                if "_low_" in next_state:
-                    state_value = 1.0
-                elif "_medium_" in next_state:
-                    state_value = 0.5
-                else:  # high CO2
-                    state_value = 0.0
-                
-                # Higher value for occupied states
-                if "_occupied_" in next_state:
-                    state_value += 0.2
-                
-                # Penalize energy usage
-                if action == Action.TURN_ON_MAX.value:
-                    state_value -= 0.4
-                elif action == Action.TURN_ON_MEDIUM.value:
-                    state_value -= 0.2
-                elif action == Action.TURN_ON_LOW.value:
-                    state_value -= 0.1
-                
-                expected_value += probability * state_value
+            logger.info(f"DEBUG: Evaluating action: {action_key_str}")
             
-            if expected_value > best_value:
-                best_value = expected_value
-                best_action = action
+            for next_state_key_str, probability in self.transition_model[self.current_state][action_key_str].items():
+                # Skip negligible probabilities for clarity
+                if probability < 0.001:
+                    continue
+                    
+                # Parse next state components
+                next_state_components = self._parse_state_key(next_state_key_str)
+                if not next_state_components:
+                    continue
+                    
+                co2_level_next = next_state_components.get("co2_level")
+                temp_level_next = next_state_components.get("temp_level")
+                occupancy_level_next = next_state_components.get("occupancy")
+                
+                # Initialize state value and components
+                state_value = 0
+                co2_value = 0
+                temp_value = 0
+                occupancy_value = 0
+                energy_value = 0
+                
+                # SIMPLIFIED VALUE FUNCTION FOR TESTING:
+                
+                # Component 1: CO2 Level Value (dominant factor)
+                if co2_level_next == CO2Level.LOW.value:
+                    # High reward for low CO2
+                    co2_value += 5.0
+                elif co2_level_next == CO2Level.MEDIUM.value:
+                    # Medium reward
+                    co2_value += 1.0
+                else:  # HIGH
+                    # Strong penalty for high CO2
+                    co2_value -= 6.0
+                
+                # Component 2: Temperature Level Value (simplified)
+                if temp_level_next == TemperatureLevel.MEDIUM.value:
+                    temp_value += 1.0
+                
+                # Component 3: Occupancy Alignment (simplified)
+                if occupancy_level_next == Occupancy.OCCUPIED.value and current_occupants > 0:
+                    occupancy_value += 0.5
+                
+                # Component 4: Energy Usage Cost (reduced)
+                if action_key_str == Action.TURN_ON_MAX.value:
+                    energy_value -= 0.3
+                elif action_key_str == Action.TURN_ON_MEDIUM.value:
+                    energy_value -= 0.2
+                elif action_key_str == Action.TURN_ON_LOW.value:
+                    energy_value -= 0.1
+                
+                # Sum all components
+                state_value = co2_value + temp_value + occupancy_value + energy_value
+                
+                # Apply probability to this state's value and add to action value
+                weighted_value = probability * state_value
+                action_value += weighted_value
+                
+                # Log detailed state value components
+                logger.info(f"  DEBUG: Next state: {next_state_key_str}, Probability: {probability:.4f}")
+                logger.info(f"    Components: CO2={co2_value}, Temp={temp_value}, Occ={occupancy_value}, Energy={energy_value}")
+                logger.info(f"    State value: {state_value}, Weighted: {weighted_value:.4f}")
+            
+            # Log final action value
+            logger.info(f"  DEBUG: Final action value for {action_key_str}: {action_value:.4f}")
+            action_values[action_key_str] = action_value
+            
+            # Check if this action has the best value so far
+            if action_value > best_value:
+                best_value = action_value
+                best_action = action_key_str
+        
+        # Log all action values for comparison
+        logger.info(f"DEBUG: All action values: {action_values}")
         
         # Reduce exploration rate over time
         self.exploration_rate *= self.random_action_decay
         
-        logger.info(f"Selected action: {best_action} for state: {self.current_state}")
+        logger.info(f"Selected action: {best_action} for state: {self.current_state} (value: {best_value:.2f})")
+        logger.info(f"Using thresholds - CO2: {active_co2_thr}, Temp: {active_temp_thr}")
+        
         return best_action
     
     def _execute_action(self, action):
