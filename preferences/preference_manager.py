@@ -1,3 +1,4 @@
+# preferences/preference_manager.py
 """Preference manager for user ventilation preferences."""
 import os
 import json

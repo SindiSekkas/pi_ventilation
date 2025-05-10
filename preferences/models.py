@@ -1,3 +1,4 @@
+# preferences/models.py
 """User preference models for the ventilation system."""
 from dataclasses import dataclass, asdict
 from datetime import datetime
