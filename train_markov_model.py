@@ -145,42 +145,79 @@ def train_model():
                     previous_csv_row = current_csv_row
                     # Evaluate initial state to have a starting point for the first transition
                     mock_data_manager.update_sensor_data_from_row(previous_csv_row)
-                    markov_controller.current_state = markov_controller._evaluate_state()
+                    markov_controller.current_state = markov_controller._evaluate_state() # This also updates internal thresholds
                     continue
 
                 # 1. Get action taken that led from previous_csv_row to current_csv_row
-                # This action was recorded IN the previous_csv_row as 'ventilation_action'
                 action_taken_str = previous_csv_row.get('ventilation_action')
                 if not action_taken_str:
                     logger.warning(f"Missing 'ventilation_action' in row: {previous_csv_row}")
                     previous_csv_row = current_csv_row
+                    mock_data_manager.update_sensor_data_from_row(previous_csv_row) # Update data for next iteration
+                    markov_controller.current_state = markov_controller._evaluate_state() # Re-evaluate state
                     continue
                 try:
                     action_taken_enum = Action(action_taken_str)
                 except ValueError:
                     logger.warning(f"Invalid action string '{action_taken_str}' in row: {previous_csv_row}")
                     previous_csv_row = current_csv_row
+                    mock_data_manager.update_sensor_data_from_row(previous_csv_row)
+                    markov_controller.current_state = markov_controller._evaluate_state()
                     continue
 
                 # 2. Determine previous_state_key
+                # Data for previous state is already set in mock_data_manager from previous iteration or initial setup
+                # We need to ensure thresholds used for evaluating previous_state_key are correct for that point in time.
+                # For simplicity, we re-evaluate previous state based on its data.
+                # This assumes mock_data_manager still holds previous_csv_row data if current_state wasn't re-evaluated above.
+                # A safer approach:
+                temp_data_holder = mock_data_manager.latest_data.copy() # Save current (which is next for prev_state_key)
                 mock_data_manager.update_sensor_data_from_row(previous_csv_row)
-                # _evaluate_state updates thresholds, which is fine for getting the state category
-                previous_state_key = markov_controller._evaluate_state()
+                previous_state_key = markov_controller._evaluate_state() # Evaluates with previous_csv_row data & updates thresholds
+                mock_data_manager.latest_data = temp_data_holder # Restore for current_state_key evaluation
+
 
                 # 3. Determine current_state_key (result of the action)
                 mock_data_manager.update_sensor_data_from_row(current_csv_row)
-                current_state_key = markov_controller._evaluate_state()
+                current_state_key = markov_controller._evaluate_state() # Evaluates with current_csv_row data & updates thresholds
+
+                # 4. Calculate reward for the transition
+                calculated_reward = 0 # Default reward
+                try:
+                    # Reward is based on the state achieved (current_csv_row) after taking action_taken_enum
+                    current_co2_val = float(current_csv_row['co2'])
+                    current_temp_val = float(current_csv_row['temperature'])
+                    current_occupants_val = int(current_csv_row['occupants'])
+                    
+                    # _calculate_reward uses the controller's current thresholds,
+                    # which were updated by _evaluate_state() using current_csv_row data.
+                    calculated_reward = markov_controller._calculate_reward(
+                        current_co2_val,
+                        current_temp_val,
+                        current_occupants_val,
+                        action_taken_enum.value # The action that was taken
+                    )
+                except KeyError as e:
+                    logger.warning(f"Missing data for reward calculation in row {current_csv_row}: {e}")
+                except ValueError as e:
+                    logger.warning(f"Invalid data type for reward calculation in row {current_csv_row}: {e}")
+
 
                 if previous_state_key and current_state_key:
-                    logger.debug(f"Transition: {previous_state_key} --({action_taken_enum.value})--> {current_state_key}")
-                    # Ensure the _update_model uses the .value of the enum
-                    markov_controller._update_model(previous_state_key, action_taken_enum.value, current_state_key)
+                    logger.debug(f"Transition: {previous_state_key} --({action_taken_enum.value})--> {current_state_key} (Reward: {calculated_reward:.2f})")
+                    markov_controller._update_model(previous_state_key, action_taken_enum.value, current_state_key, reward=calculated_reward)
                     rows_processed += 1
                 else:
-                    logger.warning(f"Could not determine states for transition. Prev: {previous_state_key}, Curr: {current_state_key}")
+                    logger.warning(f"Could not determine states for transition. Prev_Key: {previous_state_key}, Curr_Key: {current_state_key}, Action: {action_taken_enum.value}")
 
                 previous_csv_row = current_csv_row
-        
+                # Important: ensure controller's current_state is set to the new current_state_key for the next iteration's "previous_state" logic
+                # if the loop were to rely on controller.current_state directly as previous.
+                # However, we are explicitly re-evaluating previous_state_key, so this direct update might not be strictly needed here
+                # but it's good practice if other parts of the controller were active.
+                markov_controller.current_state = current_state_key
+
+
         logger.info(f"Epoch {epoch + 1} completed. Processed {rows_processed} transitions.")
 
     # Save the final trained model

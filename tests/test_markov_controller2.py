@@ -20,13 +20,41 @@ logging.basicConfig(
 logger = logging.getLogger("threshold_test")
 
 def setup_test_environment():
-    """Create test directory and initialize test data."""
-    test_data_dir = "test_data/threshold_test"
-    if os.path.exists(test_data_dir):
-        shutil.rmtree(test_data_dir)
-    os.makedirs(test_data_dir)
-    os.makedirs(os.path.join(test_data_dir, "markov"))
-    return test_data_dir
+    """Create test directory, initialize test data, and copy the trained Markov model for testing."""
+    # Determine absolute paths based on the location of this test script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(script_dir, '..'))
+
+    # Absolute path to the root directory for this specific test's data
+    # e.g., /home/pi/pi_ventilation/test_data/threshold_test
+    test_run_data_root_abs = os.path.join(project_root, "test_data", "threshold_test")
+
+    if os.path.exists(test_run_data_root_abs):
+        shutil.rmtree(test_run_data_root_abs)
+    os.makedirs(test_run_data_root_abs)
+
+    # Absolute path to the directory where the MarkovController in the test will look for its model
+    # e.g., /home/pi/pi_ventilation/test_data/threshold_test/markov
+    test_model_target_dir_abs = os.path.join(test_run_data_root_abs, "markov")
+    os.makedirs(test_model_target_dir_abs)
+
+    # Absolute path to the source pre-trained model file
+    # e.g., /home/pi/pi_ventilation/data/markov_trained/markov_model.json
+    source_model_file_abs = os.path.join(project_root, "data", "markov_trained", "markov_model.json")
+
+    # Absolute path for the destination model file within the test environment
+    dest_model_file_abs = os.path.join(test_model_target_dir_abs, "markov_model.json")
+
+    if os.path.exists(source_model_file_abs):
+        shutil.copy(source_model_file_abs, dest_model_file_abs)
+        logger.info(f"Copied trained model from {source_model_file_abs} to {dest_model_file_abs}")
+    else:
+        logger.warning(f"Trained model not found at {source_model_file_abs}. Controller might use an empty/new model if it can't load.")
+
+    # Return the path that the test functions expect (relative to project root, or absolute)
+    # The original code returned a relative path "test_data/threshold_test".
+    # Returning an absolute path is safer for the os.path.join calls later.
+    return test_run_data_root_abs
 
 class MockDataManager:
     """Mock DataManager for testing."""
