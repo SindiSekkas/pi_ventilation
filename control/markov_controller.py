@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ class Action(Enum):
 class MarkovController:
     """Markov Decision Process based ventilation controller."""
     
-    def __init__(self, data_manager, pico_manager, preference_manager=None, model_dir="data/markov", scan_interval=60):
+    def __init__(self, data_manager, pico_manager, preference_manager=None, model_dir="data/markov", scan_interval=60, occupancy_analyzer=None):
         """
         Initialize the Markov controller.
         
@@ -57,10 +57,12 @@ class MarkovController:
             preference_manager: Preference manager for user preferences (optional)
             model_dir: Directory to store the Markov model
             scan_interval: How often to check conditions (seconds)
+            occupancy_analyzer: OccupancyPatternAnalyzer for pattern-based predictions
         """
         self.data_manager = data_manager
         self.pico_manager = pico_manager
-        self.preference_manager = preference_manager  # New: store preference manager
+        self.preference_manager = preference_manager  # Store preference manager
+        self.occupancy_analyzer = occupancy_analyzer  # Store occupancy analyzer
         self.model_dir = model_dir
         self.scan_interval = scan_interval
         os.makedirs(model_dir, exist_ok=True)
@@ -93,6 +95,28 @@ class MarkovController:
         self.default_empty_home_temp_thresholds = {
             "low_max": 18,
             "medium_max": 26
+        }
+        
+        # Very energy-saving thresholds for long absence
+        self.VERY_LOW_ENERGY_THRESHOLDS_CO2 = {
+            "low_max": 900,
+            "medium_max": 1400
+        }
+        
+        self.VERY_LOW_ENERGY_THRESHOLDS_TEMP = {
+            "low_max": 17,
+            "medium_max": 27
+        }
+        
+        # Thresholds for preparing for return
+        self.PREPARE_FOR_RETURN_THRESHOLDS_CO2 = {
+            "low_max": 750,
+            "medium_max": 1100
+        }
+        
+        self.PREPARE_FOR_RETURN_THRESHOLDS_TEMP = {
+            "low_max": 19,
+            "medium_max": 25
         }
         
         # State tracking
@@ -337,10 +361,33 @@ class MarkovController:
             self.last_applied_occupants = occupants
         
         if occupants == 0:
-            # Empty home - use energy-saving thresholds
-            self.co2_thresholds = self.default_empty_home_co2_thresholds.copy()
-            self.temp_thresholds = self.default_empty_home_temp_thresholds.copy()
-            logger.info(f"Using empty home thresholds: CO2={self.co2_thresholds}, Temp={self.temp_thresholds}")
+            # Empty home - use adaptive thresholds based on pattern analysis
+            if self.occupancy_analyzer:
+                expected_duration = self.occupancy_analyzer.get_expected_empty_duration(datetime.now())
+                next_return = self.occupancy_analyzer.get_next_expected_return_time(datetime.now())
+                
+                if expected_duration and expected_duration > timedelta(hours=3):
+                    # Long absence expected - use very energy-saving thresholds
+                    self.co2_thresholds = self.VERY_LOW_ENERGY_THRESHOLDS_CO2.copy()
+                    self.temp_thresholds = self.VERY_LOW_ENERGY_THRESHOLDS_TEMP.copy()
+                    logger.info(f"Using very energy-saving thresholds - expected absence: {expected_duration}")
+                    
+                elif next_return and next_return - datetime.now() < timedelta(hours=1):
+                    # Return expected soon - prepare the environment
+                    self.co2_thresholds = self.PREPARE_FOR_RETURN_THRESHOLDS_CO2.copy()
+                    self.temp_thresholds = self.PREPARE_FOR_RETURN_THRESHOLDS_TEMP.copy()
+                    logger.info(f"Using return-prep thresholds - expected return: {next_return}")
+                    
+                else:
+                    # Uncertain prediction - use standard empty home thresholds
+                    self.co2_thresholds = self.default_empty_home_co2_thresholds.copy()
+                    self.temp_thresholds = self.default_empty_home_temp_thresholds.copy()
+                    logger.info("Using standard empty home thresholds")
+            else:
+                # No analyzer - use standard empty home thresholds
+                self.co2_thresholds = self.default_empty_home_co2_thresholds.copy()
+                self.temp_thresholds = self.default_empty_home_temp_thresholds.copy()
+                logger.info("Using standard empty home thresholds")
             
         else:
             # Home occupied - use compromise preferences from all registered users
@@ -450,6 +497,29 @@ class MarkovController:
         # If no current state, default to off
         if not self.current_state:
             return Action.TURN_OFF.value
+        
+        # Check for proactive ventilation if analyzer is available
+        if self.occupancy_analyzer and self.auto_mode:
+            next_return = self.occupancy_analyzer.get_next_expected_return_time(datetime.now())
+            
+            if next_return:
+                time_until_return = next_return - datetime.now()
+                
+                # Check if return is imminent (30-60 minutes)
+                if timedelta(minutes=30) <= time_until_return <= timedelta(minutes=60):
+                    # Get current sensor data
+                    co2 = self.data_manager.latest_data["scd41"]["co2"]
+                    
+                    # Check if environment needs preparation
+                    if co2 and co2 > self.PREPARE_FOR_RETURN_THRESHOLDS_CO2["medium_max"]:
+                        # Get current ventilation status
+                        current_status = self.pico_manager.get_ventilation_status()
+                        current_speed = self.pico_manager.get_ventilation_speed()
+                        
+                        # Start ventilation if not running or too low
+                        if not current_status or current_speed == "low":
+                            logger.info(f"Pre-arrival ventilation: CO2={co2}, return in {time_until_return}")
+                            return Action.TURN_ON_MEDIUM.value
         
         # Check if state exists in model
         if self.current_state not in self.transition_model:

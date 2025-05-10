@@ -36,6 +36,8 @@ from presence.device_manager import DeviceManager
 from presence.presence_controller import PresenceController
 from predictive.adaptive_sleep_analyzer import AdaptiveSleepAnalyzer
 from preferences.preference_manager import PreferenceManager
+from presence.occupancy_history_manager import OccupancyHistoryManager
+from predictive.occupancy_pattern_analyzer import OccupancyPatternAnalyzer
 
 def run_bot(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None):
     """Run the Telegram bot in a separate process."""
@@ -83,10 +85,18 @@ def main():
         # Initialize preference manager with updated data_dir parameter
         preference_manager = PreferenceManager(data_dir=DATA_DIR)
 
+        # Initialize occupancy history manager
+        occupancy_history_manager = OccupancyHistoryManager(data_dir=DATA_DIR)
+        
+        # Initialize occupancy pattern analyzer
+        occupancy_history_file = os.path.join(DATA_DIR, "occupancy_history", "occupancy_history.csv")
+        occupancy_pattern_analyzer = OccupancyPatternAnalyzer(occupancy_history_file)
+
         # Initialize presence controller
         presence_controller = PresenceController(
             device_manager=device_manager,
             data_manager=data_manager,
+            occupancy_history_manager=occupancy_history_manager,
             scan_interval=300  # 5 minutes between scans
         )
 
@@ -96,11 +106,12 @@ def main():
         else:
             logger.error("Failed to start presence detection system")
 
-        # Initialize Markov controller WITH preference_manager
+        # Initialize Markov controller WITH preference_manager and occupancy_analyzer
         markov_controller = MarkovController(
             data_manager=data_manager,
             pico_manager=pico_manager,
-            preference_manager=preference_manager  # NEW: Pass preference manager
+            preference_manager=preference_manager,
+            occupancy_analyzer=occupancy_pattern_analyzer
         )
         
         # Start Markov controller
@@ -134,6 +145,23 @@ def main():
             logger.info("Telegram bot started")
         else:
             logger.warning("BOT_TOKEN not configured, bot will not start")
+        
+        # Periodic task for pattern analysis (run every 6 hours)
+        def periodic_pattern_update():
+            while True:
+                try:
+                    # Process occupancy patterns periodically
+                    occupancy_pattern_analyzer.update_patterns()
+                    logger.info("Updated occupancy patterns")
+                except Exception as e:
+                    logger.error(f"Error updating occupancy patterns: {e}")
+                # Wait 6 hours before next update
+                time.sleep(21600)
+        
+        # Start periodic pattern update thread
+        pattern_thread = threading.Thread(target=periodic_pattern_update, daemon=True)
+        pattern_thread.start()
+        logger.info("Started periodic pattern update task")
         
         logger.info("Ventilation system started successfully")
         

@@ -11,21 +11,24 @@ logger = logging.getLogger(__name__)
 class PresenceController:
     """Controls the presence detection system."""
     
-    def __init__(self, device_manager, data_manager, scan_interval=300):
+    def __init__(self, device_manager, data_manager, occupancy_history_manager=None, scan_interval=300):
         """
         Initialize the presence controller.
         
         Args:
             device_manager: Device manager instance
             data_manager: Data manager instance
+            occupancy_history_manager: OccupancyHistoryManager instance for logging changes
             scan_interval: Interval between scans in seconds
         """
         self.device_manager = device_manager
         self.data_manager = data_manager
+        self.occupancy_history_manager = occupancy_history_manager
         self.scan_interval = scan_interval
         self.running = False
         self.thread = None
         self.last_occupancy = 0
+        self.last_occupancy_status = "EMPTY"
         
         # Register notification callback
         self.device_manager.set_notification_callback(self.handle_device_notification)
@@ -69,6 +72,20 @@ class PresenceController:
                 # Only update if count changed
                 if people_count != self.last_occupancy:
                     self.data_manager.update_room_data(occupants=people_count)
+                    
+                    # Record occupancy change if history manager is available
+                    if self.occupancy_history_manager:
+                        new_status = "EMPTY" if people_count == 0 else "OCCUPIED"
+                        old_status = "EMPTY" if self.last_occupancy == 0 else "OCCUPIED"
+                        
+                        # Only record if status actually changed
+                        if new_status != old_status:
+                            self.occupancy_history_manager.record_occupancy_change(
+                                new_status, 
+                                people_count
+                            )
+                            logger.info(f"Occupancy status changed: {old_status} -> {new_status} ({people_count} people)")
+                    
                     self.last_occupancy = people_count
                     logger.info(f"Updated occupancy: {people_count} people present")
                 
