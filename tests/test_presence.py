@@ -114,3 +114,5 @@ if __name__ == "__main__":
     print("\n===== PRESENCE DETECTION SYSTEM TEST =====\n")
     result = test_presence_detection()
     sys.exit(0 if result else 1)
+
+# tests/test_presence.py

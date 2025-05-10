@@ -343,3 +343,5 @@ if __name__ == "__main__":
         logger.error(f"Error running WiFi presence test: {e}", exc_info=True)
         print(f"\nError: {e}")
         sys.exit(1)
+
+# tests/test_arp.py

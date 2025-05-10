@@ -1,3 +1,5 @@
+# config/settings.py
+
 """Configuration settings for the ventilation system."""
 import os
 import logging

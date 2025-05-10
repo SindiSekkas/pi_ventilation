@@ -143,3 +143,5 @@ if __name__ == "__main__":
     else:
         print("\n✅ All tests passed! The system is working correctly.")
         sys.exit(0)
+
+# tests/test_sensors.py

@@ -1,3 +1,4 @@
+# utils/pico_manager.py
 """PicoWH ventilation control interface."""
 import logging
 import requests

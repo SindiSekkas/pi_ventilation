@@ -1,4 +1,5 @@
 """Telegram bot main entry point."""
+# bot/main.py
 import os
 import sys
 import logging

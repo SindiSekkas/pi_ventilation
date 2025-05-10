@@ -1,3 +1,5 @@
+# tests/test_people_count.py
+
 """Test script to diagnose people presence detection."""
 import time
 import logging

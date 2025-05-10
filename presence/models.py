@@ -1,3 +1,4 @@
+# presence/models.py
 """Models for presence detection system."""
 from enum import Enum
 from datetime import datetime, time

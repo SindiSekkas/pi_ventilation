@@ -1,3 +1,4 @@
+# sensors/reader.py
 """Sensor reading thread functionality."""
 import sys
 import time

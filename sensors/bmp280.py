@@ -1,3 +1,4 @@
+# sensors/bmp280.py
 """BMP280 temperature and pressure sensor interface."""
 import time
 import smbus2

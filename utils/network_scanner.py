@@ -1,3 +1,5 @@
+# utils/network_scanner.py
+
 """Network scanner for presence detection."""
 import subprocess
 import re

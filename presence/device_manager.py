@@ -1,3 +1,4 @@
+# presence/device_manager.py
 """Device manager for presence detection."""
 import json
 import os

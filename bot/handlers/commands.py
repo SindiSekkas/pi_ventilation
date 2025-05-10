@@ -1,3 +1,4 @@
+# bot/handlers/commands.py
 """Command handlers for the bot."""
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup

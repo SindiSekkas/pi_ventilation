@@ -9,6 +9,8 @@ python test_ventilation_control.py --auto
 If Pico W has a different IP:
 python test_ventilation_control.py --ip 192.168.1.100"""
 
+# tests/test_ventilation_control.py
+
 
 import time
 import logging

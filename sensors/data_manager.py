@@ -1,3 +1,4 @@
+# sensors/data_manager.py
 """Management of sensor data storage and retrieval."""
 import os
 import json

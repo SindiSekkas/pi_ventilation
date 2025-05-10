@@ -1,4 +1,5 @@
 """Main entry point for the ventilation system."""
+# main.py
 import os
 import sys
 import time

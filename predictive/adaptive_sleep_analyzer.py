@@ -1,3 +1,4 @@
+# predictive/adaptive_sleep_analyzer.py
 """
 Adaptive CO2-based Sleep Pattern Analyzer for ventilation system.
 Works with user-provided night mode settings and gradually refines them.

@@ -1,4 +1,5 @@
 """Wake-on-LAN (WoL) functionality for waking network devices."""
+# utils/wol.py
 import logging
 from wakeonlan import send_magic_packet
 import socket

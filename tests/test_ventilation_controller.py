@@ -141,3 +141,5 @@ if __name__ == "__main__":
     print("\n===== VENTILATION CONTROLLER TEST =====\n")
     successful = test_ventilation_controller()
     sys.exit(0 if successful else 1)
+
+# tests/test_ventilation_controller.py

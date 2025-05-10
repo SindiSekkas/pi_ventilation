@@ -142,3 +142,5 @@ if __name__ == "__main__":
     print("\n===== NIGHT MODE FUNCTIONALITY TEST =====\n")
     successful = test_night_mode_activation()
     sys.exit(0 if successful else 1)
+
+# tests/test_night_mode.py

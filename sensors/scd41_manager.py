@@ -1,3 +1,4 @@
+# sensors/scd41_manager.py
 """SCD41 CO2, temperature and humidity sensor management."""
 import time
 import logging

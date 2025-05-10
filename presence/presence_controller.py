@@ -1,3 +1,4 @@
+# presence/presence_controller.py
 """Controller for presence detection system."""
 import threading
 import time
