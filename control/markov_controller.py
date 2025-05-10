@@ -47,18 +47,20 @@ class Action(Enum):
 class MarkovController:
     """Markov Decision Process based ventilation controller."""
     
-    def __init__(self, data_manager, pico_manager, model_dir="data/markov", scan_interval=60):
+    def __init__(self, data_manager, pico_manager, preference_manager=None, model_dir="data/markov", scan_interval=60):
         """
         Initialize the Markov controller.
         
         Args:
             data_manager: Data manager instance for sensor readings
             pico_manager: Pico manager for controlling ventilation
+            preference_manager: Preference manager for user preferences (optional)
             model_dir: Directory to store the Markov model
             scan_interval: How often to check conditions (seconds)
         """
         self.data_manager = data_manager
         self.pico_manager = pico_manager
+        self.preference_manager = preference_manager  # New: store preference manager
         self.model_dir = model_dir
         self.scan_interval = scan_interval
         os.makedirs(model_dir, exist_ok=True)
@@ -70,16 +72,27 @@ class MarkovController:
         # MDP model file
         self.model_file = os.path.join(model_dir, "markov_model.json")
         
-        # CO2 thresholds
+        # Default CO2 thresholds (will be updated dynamically)
         self.co2_thresholds = {
             "low_max": 800,    # Upper bound for LOW
             "medium_max": 1200  # Upper bound for MEDIUM
         }
         
-        # Temperature thresholds
+        # Default temperature thresholds (will be updated dynamically)
         self.temp_thresholds = {
             "low_max": 20,     # Upper bound for LOW
             "medium_max": 24    # Upper bound for MEDIUM
+        }
+        
+        # Default thresholds for empty home (more energy-saving)
+        self.default_empty_home_co2_thresholds = {
+            "low_max": 850,
+            "medium_max": 1300
+        }
+        
+        self.default_empty_home_temp_thresholds = {
+            "low_max": 18,
+            "medium_max": 26
         }
         
         # State tracking
@@ -98,6 +111,9 @@ class MarkovController:
         self.night_mode_enabled = True
         self.night_mode_start_hour = 23
         self.night_mode_end_hour = 7
+        
+        # Initialize with -1 to ensure first update is logged
+        self.last_applied_occupants = -1
         
         # Load night mode settings from file
         self._load_night_mode_settings()
@@ -304,6 +320,62 @@ class MarkovController:
                 logger.error(f"Error in Markov control loop: {e}")
                 time.sleep(self.scan_interval)
     
+    def _update_thresholds_for_occupancy(self, occupants):
+        """
+        Update thresholds based on current occupancy level.
+        
+        Args:
+            occupants: Number of people currently in the room
+        """
+        if self.preference_manager is None:
+            logger.warning("No preference manager available, using default thresholds")
+            return
+        
+        # Log only when occupancy changes
+        if self.last_applied_occupants != occupants:
+            logger.info(f"Updating thresholds for {occupants} occupants")
+            self.last_applied_occupants = occupants
+        
+        if occupants == 0:
+            # Empty home - use energy-saving thresholds
+            self.co2_thresholds = self.default_empty_home_co2_thresholds.copy()
+            self.temp_thresholds = self.default_empty_home_temp_thresholds.copy()
+            logger.info(f"Using empty home thresholds: CO2={self.co2_thresholds}, Temp={self.temp_thresholds}")
+            
+        else:
+            # Home occupied - use compromise preferences from all registered users
+            try:
+                # Get all user preferences
+                all_user_preferences = self.preference_manager.get_all_user_preferences()
+                
+                if all_user_preferences:
+                    # Calculate compromise based on all registered users
+                    all_user_ids = list(all_user_preferences.keys())
+                    compromise = self.preference_manager.calculate_compromise_preference(all_user_ids)
+                    
+                    # Update CO2 thresholds
+                    self.co2_thresholds = {
+                        "low_max": int(compromise.co2_threshold * 0.8),  # Low threshold at 80% of compromise
+                        "medium_max": compromise.co2_threshold           # Medium threshold at compromise value
+                    }
+                    
+                    # Update temperature thresholds
+                    self.temp_thresholds = {
+                        "low_max": compromise.temp_min,
+                        "medium_max": compromise.temp_max
+                    }
+                    
+                    logger.info(f"Using compromise thresholds: CO2={self.co2_thresholds}, "
+                                f"Temp={self.temp_thresholds}, Effectiveness={compromise.effectiveness_score:.2f}")
+                    
+                else:
+                    # No registered users - use default thresholds
+                    logger.warning("No registered users found, using default thresholds")
+                    
+            except Exception as e:
+                logger.error(f"Error calculating compromise preferences: {e}")
+                logger.warning("Falling back to default thresholds")
+
     def _evaluate_state(self):
         """
         Determine current state based on sensor data.
@@ -312,6 +384,12 @@ class MarkovController:
             str: State key or None if state cannot be determined
         """
         try:
+            # Get current occupancy
+            occupants = self.data_manager.latest_data["room"]["occupants"]
+            
+            # Update thresholds based on occupancy
+            self._update_thresholds_for_occupancy(occupants)
+            
             # Get CO2 level
             co2 = self.data_manager.latest_data["scd41"]["co2"]
             if co2 is None:
@@ -340,8 +418,7 @@ class MarkovController:
             else:
                 temp_level = TemperatureLevel.HIGH.value
             
-            # Get occupancy
-            occupants = self.data_manager.latest_data["room"]["occupants"]
+            # Get occupancy state
             occupancy = Occupancy.OCCUPIED.value if occupants > 0 else Occupancy.EMPTY.value
             
             # Determine time of day
@@ -520,6 +597,9 @@ class MarkovController:
     
     def get_status(self):
         """Get controller status information."""
+        # Get current occupancy for status report
+        occupants = self.data_manager.latest_data["room"]["occupants"]
+        
         return {
             "auto_mode": self.auto_mode,
             "co2_thresholds": self.co2_thresholds,
@@ -535,7 +615,9 @@ class MarkovController:
                 "start_hour": self.night_mode_start_hour,
                 "end_hour": self.night_mode_end_hour,
                 "currently_active": self._is_night_mode_active()
-            }
+            },
+            "current_occupants": occupants,
+            "active_thresholds": "empty_home" if occupants == 0 else "compromise"
         }
     
     def set_thresholds(self, co2_low_max=None, co2_medium_max=None, temp_low_max=None, temp_medium_max=None):

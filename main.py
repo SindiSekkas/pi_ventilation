@@ -96,10 +96,11 @@ def main():
         else:
             logger.error("Failed to start presence detection system")
 
-        # Initialize Markov controller
+        # Initialize Markov controller WITH preference_manager
         markov_controller = MarkovController(
             data_manager=data_manager,
-            pico_manager=pico_manager
+            pico_manager=pico_manager,
+            preference_manager=preference_manager  # NEW: Pass preference manager
         )
         
         # Start Markov controller
