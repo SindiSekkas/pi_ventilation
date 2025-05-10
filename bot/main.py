@@ -1,5 +1,5 @@
-"""Telegram bot main entry point."""
 # bot/main.py
+"""Telegram bot main entry point."""
 import os
 import sys
 import logging
@@ -11,7 +11,7 @@ from telegram.ext import Application, CallbackQueryHandler
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import settings
-from config.settings import BOT_TOKEN, ADMIN_ID, DATA_DIR
+from config.settings import BOT_TOKEN, ADMIN_ID, DATA_DIR, OCCUPANCY_HISTORY_FILE # Added OCCUPANCY_HISTORY_FILE
 
 # Import handlers with proper path resolution
 from bot.handlers.commands import setup_command_handlers
@@ -19,6 +19,7 @@ from bot.handlers.messages import setup_message_handlers
 from bot.user_auth import UserAuth
 from bot.handlers.ventilation import setup_ventilation_handlers, handle_vent_callback
 from bot.handlers.sleep_patterns import setup_sleep_handlers
+from predictive.occupancy_pattern_analyzer import OccupancyPatternAnalyzer # Added import
 
 # Setup logging
 logging.basicConfig(
@@ -31,7 +32,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def async_main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None):
+async def async_main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None, occupancy_analyzer=None): # Added occupancy_analyzer parameter
     """Async main bot function."""
     # Initialize user authentication
     user_auth = UserAuth(DATA_DIR)
@@ -69,6 +70,11 @@ async def async_main(pico_manager=None, controller=None, data_manager=None, slee
         from preferences.preference_manager import PreferenceManager
         preference_manager = PreferenceManager()
     
+    # Create a new occupancy analyzer if not provided
+    if not occupancy_analyzer:
+        # Construct the path to the occupancy_history.csv file dynamically
+        occupancy_analyzer = OccupancyPatternAnalyzer(OCCUPANCY_HISTORY_FILE)
+
     # Add components to application context
     app.bot_data["user_auth"] = user_auth
     app.bot_data["pico_manager"] = pico_manager
@@ -76,6 +82,7 @@ async def async_main(pico_manager=None, controller=None, data_manager=None, slee
     app.bot_data["data_manager"] = data_manager
     app.bot_data["sleep_analyzer"] = sleep_analyzer
     app.bot_data["preference_manager"] = preference_manager
+    app.bot_data["occupancy_analyzer"] = occupancy_analyzer # Added occupancy_analyzer
     
     # Setup handlers
     setup_command_handlers(app)
@@ -84,6 +91,8 @@ async def async_main(pico_manager=None, controller=None, data_manager=None, slee
     setup_sleep_handlers(app)
     from bot.handlers.preferences import setup_preference_handlers
     setup_preference_handlers(app)
+    from bot.handlers.occupancy import setup_occupancy_handlers
+    setup_occupancy_handlers(app)
     
     # Start polling with specific settings based on thread
     logger.info("Bot starting polling...")
@@ -99,7 +108,7 @@ async def async_main(pico_manager=None, controller=None, data_manager=None, slee
         logger.info("Bot polling running in thread")
         try:
             # Run until the main app stops
-            while True:
+            while True: # Ensure this loop is managed correctly in your application lifecycle
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
             logger.info("Bot polling cancelled")
@@ -107,7 +116,7 @@ async def async_main(pico_manager=None, controller=None, data_manager=None, slee
             await app.stop()
             await app.shutdown()
 
-def main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None):
+def main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None, occupancy_analyzer=None): # Added occupancy_analyzer parameter
     """Start the bot with proper event loop handling."""
     try:
         logger.info("Starting telegram bot")
@@ -119,10 +128,10 @@ def main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=N
         # Run the bot with the appropriate mode based on thread
         if threading.current_thread() is threading.main_thread():
             # In main thread, we can use run_until_complete
-            loop.run_until_complete(async_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager))
+            loop.run_until_complete(async_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager, occupancy_analyzer)) # Pass occupancy_analyzer
         else:
             # In a separate thread, run without blocking
-            loop.create_task(async_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager))
+            loop.create_task(async_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager, occupancy_analyzer)) # Pass occupancy_analyzer
             loop.run_forever()
         
     except Exception as e:

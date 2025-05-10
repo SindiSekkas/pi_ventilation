@@ -7,7 +7,8 @@ def create_main_menu():
         [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
         [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")],
         [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")],
-        [InlineKeyboardButton("⚙️ My Preferences", callback_data="my_preferences")]
+        [InlineKeyboardButton("⚙️ My Preferences", callback_data="my_preferences")],
+        [InlineKeyboardButton("🏠 Home Activity", callback_data="home_activity_menu")]
     ]
     return InlineKeyboardMarkup(keyboard)
 

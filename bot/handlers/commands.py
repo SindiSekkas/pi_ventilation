@@ -57,6 +57,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         /myprefs - View and adjust your comfort preferences
         /settempcomfort [min] [max] - Set temperature comfort range
         /setco2comfort [threshold] - Set CO2 comfort threshold
+        /homepatterns - Show home occupancy patterns
+        /nextevent - Show next expected home activity change
 
         Ventilation commands:
         /vent - Show ventilation control menu
@@ -72,6 +74,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         - View detected sleep patterns
         - Check night mode settings
         - See recent sleep time adjustments
+
+        Home Activity:
+        - View occupancy patterns by day and hour
+        - See next expected arrival/departure
+        - Get predicted empty durations
 
         Preferences:
         - Set your ideal temperature range
@@ -195,6 +202,11 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         from bot.handlers.preferences import preference_callback
         await preference_callback(update, context)
         logger.info(f"User {user_id} accessed preferences menu")
+    
+    elif query.data == "home_activity_menu":
+        from bot.handlers.occupancy import show_home_activity_menu
+        await show_home_activity_menu(query.message, context, is_edit=True)
+        logger.info(f"User {user_id} accessed home activity menu")
 
 def setup_command_handlers(app):
     """Register all command handlers."""

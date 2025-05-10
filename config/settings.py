@@ -45,8 +45,14 @@ NIGHT_MODE_START_HOUR = 23  # 11 PM
 NIGHT_MODE_END_HOUR = 7     # 7 AM
 
 # Directories
-DATA_DIR = "data"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 CSV_DIR = os.path.join(DATA_DIR, "csv")
+
+# Occupancy history paths
+OCCUPANCY_HISTORY_DIR = os.path.join(DATA_DIR, "occupancy_history")  # Changed from "occupancy" to "occupancy_history" to match existing structure
+OCCUPANCY_HISTORY_FILE = os.path.join(OCCUPANCY_HISTORY_DIR, "occupancy_history.csv")
+OCCUPANCY_PROBABILITIES_FILE = os.path.join(OCCUPANCY_HISTORY_DIR, "occupancy_probabilities.json")
 
 # Skip initialisation measurements
 SKIP_INITIALIZATION = True
