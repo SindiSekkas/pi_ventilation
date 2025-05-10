@@ -595,145 +595,164 @@ class MarkovController:
         Returns:
             str: Action key
         """
-        # If no current state, default to off
         if not self.current_state:
+            logger.warning("Current state is None, defaulting to TURN_OFF")
             return Action.TURN_OFF.value
-        
-        # Get current occupancy for threshold determination
+
         current_occupants = self.data_manager.latest_data["room"]["occupants"]
-        
-        # Get current target thresholds based on occupancy
         active_co2_thr, active_temp_thr = self._get_current_target_thresholds(current_occupants)
-        
-        # Debug: Print current transition model for this state
-        logger.info(f"DEBUG: Current state transitions: {self.transition_model[self.current_state]}")
-        
-        # Check for proactive ventilation if analyzer is available
+
         if self.occupancy_analyzer and self.auto_mode:
             next_return = self.occupancy_analyzer.get_next_expected_return_time(datetime.now())
-            
             if next_return:
                 time_until_return = next_return - datetime.now()
-                
-                # Check if return is imminent (30-60 minutes)
                 if timedelta(minutes=30) <= time_until_return <= timedelta(minutes=60):
-                    # Get current sensor data
                     co2 = self.data_manager.latest_data["scd41"]["co2"]
-                    
-                    # Check if environment needs preparation
-                    if co2 and co2 > active_co2_thr["medium_max"]:
-                        # Get current ventilation status
+                    if co2 and co2 > active_co2_thr.get("medium_max", 1100): # Use .get for safety
                         current_status = self.pico_manager.get_ventilation_status()
                         current_speed = self.pico_manager.get_ventilation_speed()
-                        
-                        # Start ventilation if not running or too low
-                        if not current_status or current_speed == "low":
+                        if not current_status or current_speed == Action.TURN_ON_LOW.value:
                             logger.info(f"Pre-arrival ventilation: CO2={co2}, return in {time_until_return}")
                             return Action.TURN_ON_MEDIUM.value
         
-        # Check if state exists in model
         if self.current_state not in self.transition_model:
-            logger.warning(f"Unknown state: {self.current_state}")
+            logger.warning(f"Unknown state: {self.current_state}, defaulting to TURN_OFF")
             return Action.TURN_OFF.value
-        
-        # Random exploration (occasionally try random actions)
+
         if random.random() < self.exploration_rate:
-            random_action = random.choice(list(Action)).value
-            logger.info(f"Exploring random action: {random_action}")
-            return random_action
-        
-        # Find the best action for this state (highest predicted next state value)
+            # Ensure there are actions defined for the current state before choosing randomly
+            if self.transition_model.get(self.current_state):
+                random_action = random.choice(list(self.transition_model[self.current_state].keys()))
+                logger.info(f"Exploring random action: {random_action}")
+                return random_action
+            else:
+                logger.warning(f"No actions defined for state {self.current_state} in model, defaulting to TURN_OFF")
+                return Action.TURN_OFF.value
+
+
         best_action = None
         best_value = float('-inf')
-        
-        # Debug all action values
-        action_values = {}
-        
+        action_values_debug = {} # For detailed logging
+
+        if not self.transition_model.get(self.current_state):
+            logger.warning(f"No actions defined for current state {self.current_state} in transition model. Defaulting to OFF.")
+            return Action.TURN_OFF.value
+
         for action_key_str in self.transition_model[self.current_state]:
-            # Calculate expected value of this action
-            action_value = 0
+            action_total_expected_value = 0
             
-            logger.info(f"DEBUG: Evaluating action: {action_key_str}")
-            
+            # Ensure there are next states defined for this action
+            if not self.transition_model[self.current_state].get(action_key_str):
+                logger.debug(f"No next states defined for action {action_key_str} from state {self.current_state}")
+                continue
+
+            logger.debug(f"DEBUG: Evaluating action: {action_key_str}")
+
             for next_state_key_str, probability in self.transition_model[self.current_state][action_key_str].items():
-                # Skip negligible probabilities for clarity
-                if probability < 0.001:
+                if probability < 0.001: # Skip negligible probabilities
                     continue
-                    
-                # Parse next state components
-                next_state_components = self._parse_state_key(next_state_key_str)
-                if not next_state_components:
+
+                parsed_next_state = self._parse_state_key(next_state_key_str)
+                if not parsed_next_state:
+                    logger.warning(f"Could not parse next_state_key_str: {next_state_key_str}")
                     continue
-                    
-                co2_level_next = next_state_components.get("co2_level")
-                temp_level_next = next_state_components.get("temp_level")
-                occupancy_level_next = next_state_components.get("occupancy")
                 
-                # Initialize state value and components
-                state_value = 0
-                co2_value = 0
-                temp_value = 0
-                occupancy_value = 0
-                energy_value = 0
-                
-                # SIMPLIFIED VALUE FUNCTION FOR TESTING:
-                
-                # Component 1: CO2 Level Value (dominant factor)
+                co2_level_next = parsed_next_state.get("co2_level")
+                temp_level_next = parsed_next_state.get("temp_level")
+                occupancy_level_next = parsed_next_state.get("occupancy")
+
+                current_state_value = 0
+                co2_reward = 0
+                temp_reward = 0
+                occupancy_reward = 0
+                energy_cost = 0 # Note: costs are usually negative rewards
+
+                # 1. CO2 Component
                 if co2_level_next == CO2Level.LOW.value:
-                    # High reward for low CO2
-                    co2_value += 5.0
+                    co2_reward = 2.0
+                    if active_co2_thr.get("medium_max", 1200) > 1000: # If target allows higher CO2
+                        co2_reward -= 0.5 # Slightly reduce reward for over-ventilating
                 elif co2_level_next == CO2Level.MEDIUM.value:
-                    # Medium reward
-                    co2_value += 1.0
-                else:  # HIGH
-                    # Strong penalty for high CO2
-                    co2_value -= 6.0
+                    # Reward if MEDIUM is within or below target, penalize if target is LOW
+                    if active_co2_thr.get("medium_max", 1200) >= active_co2_thr.get("low_max", 800):
+                        co2_reward = 1.0
+                    else: # Target is strictly LOW
+                        co2_reward = 0.2 # Still better than HIGH
+                elif co2_level_next == CO2Level.HIGH.value:
+                    co2_reward = -3.0 # Strong penalty
+
+                # 2. Temperature Component
+                target_temp_min = active_temp_thr.get("low_max", 20)
+                target_temp_max = active_temp_thr.get("medium_max", 24)
+
+                if temp_level_next == TemperatureLevel.MEDIUM.value: # Approx 20-24C
+                    # Ideal if target range overlaps significantly with 20-24C
+                    # For simplicity, consider MEDIUM always good if target isn't extreme
+                    if 19 < target_temp_min < 25 and 19 < target_temp_max < 25:
+                         temp_reward = 1.5
+                    else: # If target is very cold or very hot, MEDIUM is less ideal
+                         temp_reward = 0.8 
+                elif temp_level_next == TemperatureLevel.LOW.value: # Approx <20C
+                    if target_temp_min <= 20: # Target allows or prefers cool
+                        temp_reward = 0.5 # Acceptable
+                        if target_temp_min < 19: temp_reward += 0.3 # Even better if target is very cool
+                    else: # Target is warmer, LOW is bad
+                        temp_reward = -1.0 - (target_temp_min - 20) * 0.2 # Penalty increases with deviation
+                elif temp_level_next == TemperatureLevel.HIGH.value: # Approx >24C
+                    if target_temp_max >= 24: # Target allows or prefers warm
+                        temp_reward = 0.5 # Acceptable
+                        if target_temp_max > 25: temp_reward += 0.3 # Even better if target is very warm
+                    else: # Target is cooler, HIGH is bad
+                        temp_reward = -1.0 - (24 - target_temp_max) * 0.2 # Penalty increases with deviation
                 
-                # Component 2: Temperature Level Value (simplified)
-                if temp_level_next == TemperatureLevel.MEDIUM.value:
-                    temp_value += 1.0
-                
-                # Component 3: Occupancy Alignment (simplified)
+                temp_reward = max(-2.0, min(2.0, temp_reward)) # Cap rewards/penalties
+
+                # 3. Occupancy Component
                 if occupancy_level_next == Occupancy.OCCUPIED.value and current_occupants > 0:
-                    occupancy_value += 0.5
+                    occupancy_reward = 0.8
+                elif occupancy_level_next == Occupancy.EMPTY.value and current_occupants == 0:
+                    occupancy_reward = 0.5
                 
-                # Component 4: Energy Usage Cost (reduced)
+                # 4. Energy Cost Component
                 if action_key_str == Action.TURN_ON_MAX.value:
-                    energy_value -= 0.3
+                    energy_cost = -0.5 # Adjusted from -1.0
                 elif action_key_str == Action.TURN_ON_MEDIUM.value:
-                    energy_value -= 0.2
+                    energy_cost = -0.3 # Adjusted from -0.6
                 elif action_key_str == Action.TURN_ON_LOW.value:
-                    energy_value -= 0.1
+                    energy_cost = -0.1 # Adjusted from -0.3
+
+                current_state_value = co2_reward + temp_reward + occupancy_reward + energy_cost
                 
-                # Sum all components
-                state_value = co2_value + temp_value + occupancy_value + energy_value
+                logger.debug(f"  DEBUG: Next state: {next_state_key_str}, Prob: {probability:.4f}")
+                logger.debug(f"    Components: CO2_rew={co2_reward:.2f}, Temp_rew={temp_reward:.2f}, Occ_rew={occupancy_reward:.2f}, Energy_cost={energy_cost:.2f}")
+                logger.debug(f"    Raw State_value: {current_state_value:.2f}, Weighted: {probability * current_state_value:.4f}")
                 
-                # Apply probability to this state's value and add to action value
-                weighted_value = probability * state_value
-                action_value += weighted_value
-                
-                # Log detailed state value components
-                logger.info(f"  DEBUG: Next state: {next_state_key_str}, Probability: {probability:.4f}")
-                logger.info(f"    Components: CO2={co2_value}, Temp={temp_value}, Occ={occupancy_value}, Energy={energy_value}")
-                logger.info(f"    State value: {state_value}, Weighted: {weighted_value:.4f}")
+                action_total_expected_value += probability * current_state_value
             
-            # Log final action value
-            logger.info(f"  DEBUG: Final action value for {action_key_str}: {action_value:.4f}")
-            action_values[action_key_str] = action_value
-            
-            # Check if this action has the best value so far
-            if action_value > best_value:
-                best_value = action_value
+            action_values_debug[action_key_str] = action_total_expected_value
+            logger.debug(f"  DEBUG: Total Expected Value for action {action_key_str}: {action_total_expected_value:.4f}")
+
+            if action_total_expected_value > best_value:
+                best_value = action_total_expected_value
                 best_action = action_key_str
         
-        # Log all action values for comparison
-        logger.info(f"DEBUG: All action values: {action_values}")
+        logger.debug(f"DEBUG: All action values: {action_values_debug}")
         
-        # Reduce exploration rate over time
+        if best_action is None: # Fallback if no action was chosen
+            if self.transition_model.get(self.current_state):
+                 best_action = random.choice(list(self.transition_model[self.current_state].keys()))
+                 logger.warning(f"No best_action derived from values, choosing random available: {best_action}")
+            else:
+                 best_action = Action.TURN_OFF.value # Ultimate fallback
+                 logger.warning(f"No actions available for state {self.current_state}, defaulting to OFF.")
+
+
         self.exploration_rate *= self.random_action_decay
         
-        logger.info(f"Selected action: {best_action} for state: {self.current_state} (value: {best_value:.2f})")
-        logger.info(f"Using thresholds - CO2: {active_co2_thr}, Temp: {active_temp_thr}")
+        logger.info(f"Selected action: {best_action} for state: {self.current_state} (best_value: {best_value:.2f})")
+        # Log active thresholds for context
+        log_active_co2_thr, log_active_temp_thr = self._get_current_target_thresholds(current_occupants) # Re-fetch for logging consistency
+        logger.info(f"Using thresholds - CO2: {log_active_co2_thr}, Temp: {log_active_temp_thr}")
         
         return best_action
     
