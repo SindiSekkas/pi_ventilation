@@ -164,8 +164,8 @@ class PreferenceManager:
         
         # Step 2: If intersections exist, use them
         if temp_intersections:
-            temp_min = (temp_intersections[0] + temp_intersections[1]) / 2 - 1
-            temp_max = (temp_intersections[0] + temp_intersections[1]) / 2 + 1
+            temp_min = temp_intersections[0]
+            temp_max = temp_intersections[1]
         else:
             # No intersection - find weighted average with sensitivity
             temp_min, temp_max = self._calculate_weighted_range(
@@ -173,8 +173,8 @@ class PreferenceManager:
             )
         
         if humidity_intersections:
-            humidity_min = (humidity_intersections[0] + humidity_intersections[1]) / 2 - 5
-            humidity_max = (humidity_intersections[0] + humidity_intersections[1]) / 2 + 5
+            humidity_min = humidity_intersections[0]
+            humidity_max = humidity_intersections[1]
         else:
             # No intersection - find weighted average
             humidity_min, humidity_max = self._calculate_weighted_range(
@@ -310,55 +310,6 @@ class PreferenceManager:
         
         effectiveness = 1 - (total_dissatisfaction / max_possible_dissatisfaction)
         return max(0.0, min(1.0, effectiveness))
-    
-    def get_average_preferences(self, list_of_user_ids: List[int] = None) -> UserPreference:
-        """Calculate average preferences for a group of users (legacy method)."""
-        if list_of_user_ids is None:
-            list_of_user_ids = list(self.preferences.keys())
-        
-        if not list_of_user_ids:
-            return UserPreference(user_id=0, username="default")
-        
-        # Calculate averages
-        avg_temp_min = 0
-        avg_temp_max = 0
-        avg_co2_threshold = 0
-        avg_humidity_min = 0
-        avg_humidity_max = 0
-        avg_sensitivity_temp = 0
-        avg_sensitivity_co2 = 0
-        avg_sensitivity_humidity = 0
-        count = 0
-        
-        for user_id in list_of_user_ids:
-            if user_id in self.preferences:
-                pref = self.preferences[user_id]
-                avg_temp_min += pref.temp_min
-                avg_temp_max += pref.temp_max
-                avg_co2_threshold += pref.co2_threshold
-                avg_humidity_min += pref.humidity_min
-                avg_humidity_max += pref.humidity_max
-                avg_sensitivity_temp += pref.sensitivity_temp
-                avg_sensitivity_co2 += pref.sensitivity_co2
-                avg_sensitivity_humidity += pref.sensitivity_humidity
-                count += 1
-        
-        if count == 0:
-            return UserPreference(user_id=0, username="default")
-        
-        # Create and return average preference
-        return UserPreference(
-            user_id=0,
-            username="average",
-            temp_min=round(avg_temp_min / count, 1),
-            temp_max=round(avg_temp_max / count, 1),
-            co2_threshold=round(avg_co2_threshold / count),
-            humidity_min=round(avg_humidity_min / count, 1),
-            humidity_max=round(avg_humidity_max / count, 1),
-            sensitivity_temp=round(avg_sensitivity_temp / count, 2),
-            sensitivity_co2=round(avg_sensitivity_co2 / count, 2),
-            sensitivity_humidity=round(avg_sensitivity_humidity / count, 2)
-        )
     
     def add_feedback(self, user_id: int, feedback_type: str, sensor_data: Dict):
         """Add user feedback record."""
