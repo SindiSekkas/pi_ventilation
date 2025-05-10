@@ -17,6 +17,7 @@ class UserPreference:
     humidity_max: float = 60.0
     sensitivity_temp: float = 1.0  # 1.0 = normal sensitivity, 0.5 = less sensitive, 2.0 = more sensitive
     sensitivity_co2: float = 1.0
+    sensitivity_humidity: float = 1.0
     created_at: str = None
     updated_at: str = None
     
@@ -66,6 +67,22 @@ class UserPreference:
         elif feedback_type == "comfortable" and current_co2 <= self.co2_threshold:
             # If comfortable at current level, allow slightly higher threshold
             self.co2_threshold = min(self.co2_threshold + adjustment, 1500)
+    
+    def adjust_humidity_preference(self, feedback_type, current_humidity):
+        """Adjust humidity preferences based on user feedback."""
+        adjustment = 5.0 if self.sensitivity_humidity >= 1.0 else 2.5
+        
+        if feedback_type == "too_dry":
+            self.humidity_min = min(self.humidity_min + adjustment, 70.0)
+            self.humidity_max = max(self.humidity_max, self.humidity_min + 5.0)
+        elif feedback_type == "too_humid":
+            self.humidity_max = max(self.humidity_max - adjustment, 20.0)
+            self.humidity_min = min(self.humidity_min, self.humidity_max - 5.0)
+        elif feedback_type == "comfortable" and self.humidity_min < current_humidity < self.humidity_max:
+            # Slightly expand comfort zone when user reports comfort
+            range_adjustment = 2.0
+            self.humidity_min = max(self.humidity_min - range_adjustment, 10.0)
+            self.humidity_max = min(self.humidity_max + range_adjustment, 80.0)
 
 
 @dataclass
@@ -73,7 +90,7 @@ class FeedbackRecord:
     """Record of user comfort feedback."""
     user_id: int
     timestamp: str
-    feedback_type: str  # "comfortable", "too_hot", "too_cold", "stuffy"
+    feedback_type: str  # "comfortable", "too_hot", "too_cold", "stuffy", "too_dry", "too_humid"
     sensor_data: dict   # snapshot of sensor data at the time
     
     def __post_init__(self):
@@ -88,3 +105,22 @@ class FeedbackRecord:
     def from_dict(cls, data):
         """Create feedback from dictionary."""
         return cls(**data)
+
+
+@dataclass
+class CompromisePreference:
+    """Calculated compromise preference based on multiple users."""
+    user_count: int
+    temp_min: float
+    temp_max: float
+    co2_threshold: int
+    humidity_min: float
+    humidity_max: float
+    effectiveness_score: float  # How well this compromise suits all users (0.0-1.0)
+    
+    def to_dict(self):
+        """Convert compromise preference to dictionary."""
+        return asdict(self)
+
+
+        

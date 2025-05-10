@@ -254,7 +254,7 @@ def guess_device_type(mac, vendor):
 
     # PHONE detection pattern list
     phone_patterns = [
-        'apple', 'iphone', 'ipad', 'samsung', 'xiaomi', 'huawei',
+        'apple', 'iphone', 'ipad', 'samsung', 'huawei',
         'oneplus', 'google', 'motorola', 'nokia', 'sony mobile',
         'htc', 'oppo', 'vivo', 'realme', 'lg electronics'
     ]
@@ -312,7 +312,7 @@ def get_vendor_confidence_score(vendor):
     vendor = vendor.lower()
     
     # High confidence phone manufacturers
-    if any(name in vendor for name in ['apple', 'iphone', 'samsung', 'xiaomi', 'huawei', 'google pixel']):
+    if any(name in vendor for name in ['apple', 'iphone', 'samsung', 'huawei', 'google pixel']):
         return 0.9
     
     # Medium confidence phone manufacturers

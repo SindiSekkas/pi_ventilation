@@ -67,6 +67,7 @@ async def show_preferences_menu(user_id, message_obj, context, is_edit=False):
     text += f"**Sensitivity Settings**\n"
     text += f"Temperature: {'High' if preference.sensitivity_temp >= 1.5 else 'Low' if preference.sensitivity_temp <= 0.5 else 'Normal'}\n"
     text += f"Air Quality: {'High' if preference.sensitivity_co2 >= 1.5 else 'Low' if preference.sensitivity_co2 <= 0.5 else 'Normal'}\n"
+    text += f"Humidity: {'High' if preference.sensitivity_humidity >= 1.5 else 'Low' if preference.sensitivity_humidity <= 0.5 else 'Normal'}\n"
     
     # Create inline keyboard
     keyboard = [
@@ -78,6 +79,8 @@ async def show_preferences_menu(user_id, message_obj, context, is_edit=False):
          InlineKeyboardButton("✅ All Good", callback_data="feedback_comfortable")],
         [InlineKeyboardButton("❄️ Too Cold", callback_data="feedback_too_cold"),
          InlineKeyboardButton("🔥 Too Hot", callback_data="feedback_too_hot")],
+        [InlineKeyboardButton("💨 Too Dry", callback_data="feedback_too_dry"),
+         InlineKeyboardButton("💦 Too Humid", callback_data="feedback_too_humid")],
         [InlineKeyboardButton("😷 Stuffy", callback_data="feedback_stuffy")],
         [InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")]
     ]
@@ -202,12 +205,14 @@ async def show_sensitivity_settings(query, preference_manager, user_id):
     
     text = f"*Sensitivity Settings*\n\n"
     text += f"Temperature Sensitivity: **{'High' if preference.sensitivity_temp >= 1.5 else 'Low' if preference.sensitivity_temp <= 0.5 else 'Normal'}**\n"
-    text += f"Air Quality Sensitivity: **{'High' if preference.sensitivity_co2 >= 1.5 else 'Low' if preference.sensitivity_co2 <= 0.5 else 'Normal'}**\n\n"
+    text += f"Air Quality Sensitivity: **{'High' if preference.sensitivity_co2 >= 1.5 else 'Low' if preference.sensitivity_co2 <= 0.5 else 'Normal'}**\n"
+    text += f"Humidity Sensitivity: **{'High' if preference.sensitivity_humidity >= 1.5 else 'Low' if preference.sensitivity_humidity <= 0.5 else 'Normal'}**\n\n"
     text += "Higher sensitivity means the system will react more quickly to changes."
     
     keyboard = [
         [InlineKeyboardButton("🌡️ Temperature Sensitivity", callback_data="sensitivity_temp_menu")],
         [InlineKeyboardButton("🌬️ Air Quality Sensitivity", callback_data="sensitivity_co2_menu")],
+        [InlineKeyboardButton("💧 Humidity Sensitivity", callback_data="sensitivity_humidity_menu")],
         [InlineKeyboardButton("⬅️ Back", callback_data="pref_show")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -228,10 +233,11 @@ async def show_feedback_history(query, preference_manager, user_id):
             
             temp = sensor_data.get("scd41", {}).get("temperature", "N/A")
             co2 = sensor_data.get("scd41", {}).get("co2", "N/A")
+            humidity = sensor_data.get("scd41", {}).get("humidity", "N/A")
             
             text += f"**{timestamp}**\n"
             text += f"Feedback: {feedback_type.replace('_', ' ').title()}\n"
-            text += f"Conditions: {temp}°C, {co2} ppm\n\n"
+            text += f"Conditions: {temp}°C, {co2} ppm, {humidity}%\n\n"
     else:
         text += "No feedback recorded yet.\n"
     
@@ -268,6 +274,10 @@ async def handle_feedback(query, context, feedback_type):
         feedback_text += "I'll adjust your temperature preferences to be cooler."
     elif feedback_type == "stuffy":
         feedback_text += "I'll lower your CO₂ threshold for better air quality."
+    elif feedback_type == "too_dry":
+        feedback_text += "I'll adjust your humidity preferences to expect more moisture."
+    elif feedback_type == "too_humid":
+        feedback_text += "I'll adjust your humidity preferences to expect less moisture."
     
     keyboard = [[InlineKeyboardButton("⬅️ Back to Preferences", callback_data="pref_show")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -333,6 +343,8 @@ async def handle_sensitivity_setting(query, preference_manager, user_id):
         await show_sensitivity_temp_menu(query, preference_manager, user_id)
     elif query.data == "sensitivity_co2_menu":
         await show_sensitivity_co2_menu(query, preference_manager, user_id)
+    elif query.data == "sensitivity_humidity_menu":
+        await show_sensitivity_humidity_menu(query, preference_manager, user_id)
     elif query.data == "sensitivity_temp_low":
         preference_manager.set_user_preference(user_id, sensitivity_temp=0.5)
         await show_sensitivity_settings(query, preference_manager, user_id)
@@ -350,6 +362,15 @@ async def handle_sensitivity_setting(query, preference_manager, user_id):
         await show_sensitivity_settings(query, preference_manager, user_id)
     elif query.data == "sensitivity_co2_high":
         preference_manager.set_user_preference(user_id, sensitivity_co2=1.5)
+        await show_sensitivity_settings(query, preference_manager, user_id)
+    elif query.data == "sensitivity_humidity_low":
+        preference_manager.set_user_preference(user_id, sensitivity_humidity=0.5)
+        await show_sensitivity_settings(query, preference_manager, user_id)
+    elif query.data == "sensitivity_humidity_normal":
+        preference_manager.set_user_preference(user_id, sensitivity_humidity=1.0)
+        await show_sensitivity_settings(query, preference_manager, user_id)
+    elif query.data == "sensitivity_humidity_high":
+        preference_manager.set_user_preference(user_id, sensitivity_humidity=1.5)
         await show_sensitivity_settings(query, preference_manager, user_id)
 
 async def show_sensitivity_temp_menu(query, preference_manager, user_id):
@@ -382,6 +403,24 @@ async def show_sensitivity_co2_menu(query, preference_manager, user_id):
         [InlineKeyboardButton("Low (More Tolerant)", callback_data="sensitivity_co2_low")],
         [InlineKeyboardButton("Normal", callback_data="sensitivity_co2_normal")],
         [InlineKeyboardButton("High (Less Tolerant)", callback_data="sensitivity_co2_high")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="pref_sensitivity")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+
+async def show_sensitivity_humidity_menu(query, preference_manager, user_id):
+    """Show humidity sensitivity menu."""
+    preference = preference_manager.get_user_preference(user_id)
+    
+    text = f"*Humidity Sensitivity*\n\n"
+    text += f"Current: **{'High' if preference.sensitivity_humidity >= 1.5 else 'Low' if preference.sensitivity_humidity <= 0.5 else 'Normal'}**\n\n"
+    text += "Choose sensitivity level:"
+    
+    keyboard = [
+        [InlineKeyboardButton("Low (More Tolerant)", callback_data="sensitivity_humidity_low")],
+        [InlineKeyboardButton("Normal", callback_data="sensitivity_humidity_normal")],
+        [InlineKeyboardButton("High (Less Tolerant)", callback_data="sensitivity_humidity_high")],
         [InlineKeyboardButton("⬅️ Back", callback_data="pref_sensitivity")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)

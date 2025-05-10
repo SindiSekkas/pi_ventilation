@@ -80,8 +80,8 @@ def main():
         # Initialize device manager
         device_manager = DeviceManager(data_dir=os.path.join(DATA_DIR, "presence"))   
 
-        # Initialize preference manager
-        preference_manager = PreferenceManager()
+        # Initialize preference manager with updated data_dir parameter
+        preference_manager = PreferenceManager(data_dir=DATA_DIR)
 
         # Initialize presence controller
         presence_controller = PresenceController(
