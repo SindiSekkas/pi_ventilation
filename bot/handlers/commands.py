@@ -25,7 +25,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
             [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")],
-            [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")]
+            [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")],
+            [InlineKeyboardButton("⚙️ My Preferences", callback_data="my_preferences")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
@@ -52,27 +53,36 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     help_text = """
-Available commands:
-/start - Start bot and show main menu
-/help - Show this help
-/adduser - Start the process to add a new trusted user
-/cancel - Cancel the current operation
-/sleep - Show sleep pattern analysis and night mode settings
+        Available commands:
+        /start - Start bot and show main menu
+        /help - Show this help
+        /adduser - Start the process to add a new trusted user
+        /cancel - Cancel the current operation
+        /sleep - Show sleep pattern analysis and night mode settings
+        /myprefs - View and adjust your comfort preferences
+        /settempcomfort [min] [max] - Set temperature comfort range
+        /setco2comfort [threshold] - Set CO2 comfort threshold
 
-Ventilation commands:
-/vent - Show ventilation control menu
-/ventstatus - Show current ventilation status
+        Ventilation commands:
+        /vent - Show ventilation control menu
+        /ventstatus - Show current ventilation status
 
-Ventilation Control:
-- Turn ventilation on/off manually
-- Set ventilation speed (low/medium/max)
-- Toggle auto mode on/off
-- View current status and sensor readings
+        Ventilation Control:
+        - Turn ventilation on/off manually
+        - Set ventilation speed (low/medium/max)
+        - Toggle auto mode on/off
+        - View current status and sensor readings
 
-Sleep Analysis:
-- View detected sleep patterns
-- Check night mode settings
-- See recent sleep time adjustments
+        Sleep Analysis:
+        - View detected sleep patterns
+        - Check night mode settings
+        - See recent sleep time adjustments
+
+        Preferences:
+        - Set your ideal temperature range
+        - Configure CO2 threshold
+        - Adjust humidity preferences
+        - Provide comfort feedback
     """
     await update.message.reply_text(help_text)
     logger.info(f"Help command from user {user_id}")
@@ -154,11 +164,12 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         # Cancel add user process
         user_auth.stop_adding_user()
         
-        # Return to main menu
+        # Return to main menu - update to include all options
         keyboard = [
             [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
             [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")],
-            [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")]
+            [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")],
+            [InlineKeyboardButton("⚙️ My Preferences", callback_data="my_preferences")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -182,6 +193,11 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         from bot.handlers.sleep_patterns import handle_sleep_callback
         await handle_sleep_callback(update, context)
         logger.info(f"User {user_id} accessed night settings from sleep menu")
+        
+    elif query.data == "my_preferences":
+        from bot.handlers.preferences import preference_callback
+        await preference_callback(update, context)
+        logger.info(f"User {user_id} accessed preferences menu")
 
 def setup_command_handlers(app):
     """Register all command handlers."""
@@ -189,5 +205,5 @@ def setup_command_handlers(app):
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("adduser", add_user_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
-    app.add_handler(CallbackQueryHandler(handle_button_callback, pattern='^(add_user|cancel_add_user|vent_menu|sleep_refresh|night_settings)$'))
+    app.add_handler(CallbackQueryHandler(handle_button_callback, pattern='^(add_user|cancel_add_user|vent_menu|sleep_refresh|night_settings|my_preferences)$'))
     logger.info("Command handlers registered")

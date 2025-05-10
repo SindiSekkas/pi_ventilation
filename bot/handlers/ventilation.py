@@ -257,7 +257,9 @@ async def handle_vent_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             # Return to main menu
             keyboard = [
                 [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
-                [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")]
+                [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")],
+                [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")],
+                [InlineKeyboardButton("⚙️ My Preferences", callback_data="my_preferences")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(

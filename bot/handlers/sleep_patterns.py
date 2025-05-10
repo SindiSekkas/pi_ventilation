@@ -62,7 +62,8 @@ async def sleep_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Add buttons
     keyboard = [
         [InlineKeyboardButton("🔄 Refresh", callback_data="sleep_refresh")],
-        [InlineKeyboardButton("🌙 Night Mode Settings", callback_data="night_settings")]
+        [InlineKeyboardButton("🌙 Night Mode Settings", callback_data="night_settings")],
+        [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="sleep_main_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -123,10 +124,11 @@ async def handle_sleep_callback(update: Update, context: ContextTypes.DEFAULT_TY
             # Create full message
             message = f"*Sleep Pattern Analysis*\n\n{patterns_text}\n{night_mode_text}\n{adjustments_text}"
             
-            # Update message with same buttons
+            # Update message with same buttons including the back button
             keyboard = [
                 [InlineKeyboardButton("🔄 Refresh", callback_data="sleep_refresh")],
-                [InlineKeyboardButton("🌙 Night Mode Settings", callback_data="night_settings")]
+                [InlineKeyboardButton("🌙 Night Mode Settings", callback_data="night_settings")],
+                [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="sleep_main_menu")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -142,6 +144,21 @@ async def handle_sleep_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await show_night_settings_menu(query, controller)
         else:
             await query.edit_message_text("Night mode settings are not available.")
+    
+    elif query.data == "sleep_main_menu":
+        # Return to main menu
+        keyboard = [
+            [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
+            [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")],
+            [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")],
+            [InlineKeyboardButton("⚙️ My Preferences", callback_data="my_preferences")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            f"Hi {user.first_name}! What would you like to do?",
+            reply_markup=reply_markup
+        )
+        logger.info(f"User {user_id} returned to main menu from sleep analysis")
 
 def setup_sleep_handlers(app):
     """Register sleep pattern handlers."""

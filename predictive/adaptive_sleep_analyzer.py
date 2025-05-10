@@ -1,4 +1,3 @@
-# predictive/adaptive_sleep_analyzer.py
 """
 Adaptive CO2-based Sleep Pattern Analyzer for ventilation system.
 Works with user-provided night mode settings and gradually refines them.
@@ -8,7 +7,8 @@ import json
 import logging
 import numpy as np
 import threading
-from datetime import datetime, timedelta, time
+import time as time_module
+from datetime import datetime, timedelta
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
@@ -914,6 +914,6 @@ class AdaptiveSleepAnalyzer:
                 for _ in range(100):
                     if not self.running:
                         break
-                    time.sleep(3)
+                    time_module.sleep(3)
         except Exception as e:
             logger.error(f"Error in adaptive sleep analyzer loop: {e}")

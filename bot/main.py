@@ -31,7 +31,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def async_main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None):
+async def async_main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None):
     """Async main bot function."""
     # Initialize user authentication
     user_auth = UserAuth(DATA_DIR)
@@ -64,18 +64,26 @@ async def async_main(pico_manager=None, controller=None, data_manager=None, slee
     
     app = builder.build()
     
+    # Create a new preference manager if not provided
+    if not preference_manager:
+        from preferences.preference_manager import PreferenceManager
+        preference_manager = PreferenceManager()
+    
     # Add components to application context
     app.bot_data["user_auth"] = user_auth
     app.bot_data["pico_manager"] = pico_manager
     app.bot_data["controller"] = controller
     app.bot_data["data_manager"] = data_manager
     app.bot_data["sleep_analyzer"] = sleep_analyzer
+    app.bot_data["preference_manager"] = preference_manager
     
     # Setup handlers
     setup_command_handlers(app)
     setup_message_handlers(app)
     setup_ventilation_handlers(app)
     setup_sleep_handlers(app)
+    from bot.handlers.preferences import setup_preference_handlers
+    setup_preference_handlers(app)
     
     # Start polling with specific settings based on thread
     logger.info("Bot starting polling...")
@@ -99,7 +107,7 @@ async def async_main(pico_manager=None, controller=None, data_manager=None, slee
             await app.stop()
             await app.shutdown()
 
-def main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None):
+def main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None):
     """Start the bot with proper event loop handling."""
     try:
         logger.info("Starting telegram bot")
@@ -111,10 +119,10 @@ def main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=N
         # Run the bot with the appropriate mode based on thread
         if threading.current_thread() is threading.main_thread():
             # In main thread, we can use run_until_complete
-            loop.run_until_complete(async_main(pico_manager, controller, data_manager, sleep_analyzer))
+            loop.run_until_complete(async_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager))
         else:
             # In a separate thread, run without blocking
-            loop.create_task(async_main(pico_manager, controller, data_manager, sleep_analyzer))
+            loop.create_task(async_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager))
             loop.run_forever()
         
     except Exception as e:

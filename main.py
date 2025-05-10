@@ -35,15 +35,16 @@ from control.markov_controller import MarkovController
 from presence.device_manager import DeviceManager
 from presence.presence_controller import PresenceController
 from predictive.adaptive_sleep_analyzer import AdaptiveSleepAnalyzer
+from preferences.preference_manager import PreferenceManager
 
-def run_bot(pico_manager, controller, data_manager, sleep_analyzer):
+def run_bot(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None):
     """Run the Telegram bot in a separate process."""
     try:
         # Import bot main
         from bot.main import main as bot_main
         
         # Run bot with passed components
-        bot_main(pico_manager, controller, data_manager, sleep_analyzer)
+        bot_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager)
     except Exception as e:
         logger.error(f"Error in bot process: {e}", exc_info=True)
         # Don't exit, just log the error and continue
@@ -78,6 +79,9 @@ def main():
 
         # Initialize device manager
         device_manager = DeviceManager(data_dir=os.path.join(DATA_DIR, "presence"))   
+
+        # Initialize preference manager
+        preference_manager = PreferenceManager()
 
         # Initialize presence controller
         presence_controller = PresenceController(
@@ -122,7 +126,7 @@ def main():
             logger.info("Starting Telegram bot")
             bot_thread = threading.Thread(
                 target=run_bot, 
-                args=(pico_manager, markov_controller, data_manager, sleep_analyzer),
+                args=(pico_manager, markov_controller, data_manager, sleep_analyzer, preference_manager),
                 daemon=True
             )
             bot_thread.start()
