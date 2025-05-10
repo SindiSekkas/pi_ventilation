@@ -3,6 +3,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from telegram.constants import ParseMode
+from bot.menu import create_main_menu, create_back_button, get_main_menu_message
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ async def show_preferences_menu(user_id, message_obj, context, is_edit=False):
         [InlineKeyboardButton("❄️ Too Cold", callback_data="feedback_too_cold"),
          InlineKeyboardButton("🔥 Too Hot", callback_data="feedback_too_hot")],
         [InlineKeyboardButton("😷 Stuffy", callback_data="feedback_stuffy")],
-        [InlineKeyboardButton("⬅️ Back to Main", callback_data="pref_main_menu")]
+        [InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -121,20 +122,6 @@ async def handle_preference_callback(update: Update, context: ContextTypes.DEFAU
         await show_sensitivity_settings(query, preference_manager, user_id)
     elif query.data == "pref_history":
         await show_feedback_history(query, preference_manager, user_id)
-    elif query.data == "pref_main_menu":
-        # Show main menu with the callback query's message
-        keyboard = [
-            [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
-            [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")],
-            [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")],
-            [InlineKeyboardButton("⚙️ My Preferences", callback_data="my_preferences")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            f"Hi {user.first_name}! What would you like to do?",
-            reply_markup=reply_markup
-        )
-        logger.info(f"User {user_id} returned to main menu from preferences")
     elif query.data.startswith("feedback_"):
         feedback_type = query.data.replace("feedback_", "")
         await handle_feedback(query, context, feedback_type)

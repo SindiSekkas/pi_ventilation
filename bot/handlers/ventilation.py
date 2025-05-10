@@ -3,6 +3,7 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, ContextTypes, CallbackQueryHandler
+from bot.menu import create_main_menu, create_back_to_main_menu_keyboard, get_main_menu_message
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("📊 Check Status", callback_data="vent_status")])
     
     # Main menu button
-    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="vent_main_menu")])
+    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -252,21 +253,6 @@ async def handle_vent_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         elif action == "show_menu_from_status":
             # This action is called from the "Back" button on the detailed status page
             await show_vent_menu(query.message, context)
-        
-        elif action == "main_menu":
-            # Return to main menu
-            keyboard = [
-                [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
-                [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")],
-                [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")],
-                [InlineKeyboardButton("⚙️ My Preferences", callback_data="my_preferences")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                f"🏠 Main Menu. What would you like to do?",
-                reply_markup=reply_markup
-            )
-            logger.info(f"User {user_id} returned to main menu from ventilation control")
         
         elif action in ["off", "low", "medium", "max"]:
             # Check if auto mode is enabled
@@ -442,7 +428,7 @@ async def show_vent_menu(message, context):
     keyboard.append([InlineKeyboardButton("📊 Check Status", callback_data="vent_status")])
     
     # Main menu button
-    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="vent_main_menu")])
+    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     

@@ -449,10 +449,18 @@ class DeviceManager:
             people_count = 0
             counted_owners = set()
             current_time = datetime.now()
-            
+            logger.info(f"Starting presence calculation. Current time: {current_time.isoformat()}")
+            logger.debug(f"Initial people_count: {people_count}, counted_owners: {counted_owners}")
+
             # First count phones with high confidence
+            logger.debug("Processing devices for primary count (active or probably present phones with owners):")
             for device in self.devices.values():
-                if ((device.status == "active" or self.is_probably_present(device, current_time)) and 
+                logger.debug(f"Checking device: {device.name} (MAC: {device.mac}, Type: {device.device_type}, Status: {device.status}, Owner: '{device.owner}', Counts: {device.count_for_presence})")
+                is_active = device.status == "active"
+                is_probable = self.is_probably_present(device, current_time)
+                logger.debug(f"Device {device.name}: is_active={is_active}, is_probable={is_probable}")
+
+                if ((is_active or is_probable) and
                     device.count_for_presence and 
                     device.device_type == DeviceType.PHONE.value and
                     device.owner and 
@@ -460,9 +468,20 @@ class DeviceManager:
                     
                     people_count += 1
                     counted_owners.add(device.owner)
-                    logger.debug(f"Counting {device.owner} as present (phone: {device.name})")
+                    logger.info(f"Incremented people_count to {people_count}. Added owner '{device.owner}' from device '{device.name}'. Reason: Active/Probable phone with owner.")
+                elif not device.count_for_presence:
+                    logger.debug(f"Skipping {device.name}: count_for_presence is False.")
+                elif device.device_type != DeviceType.PHONE.value:
+                    logger.debug(f"Skipping {device.name}: not a PHONE.")
+                elif not device.owner:
+                    logger.debug(f"Skipping {device.name} in this step: no owner assigned (will be checked later).")
+                elif device.owner in counted_owners:
+                    logger.debug(f"Skipping {device.name}: owner '{device.owner}' already counted.")
             
+            logger.debug(f"After primary count: people_count={people_count}, counted_owners={counted_owners}")
+
             # For reliability, try extra detection for phones marked inactive
+            logger.debug("Processing inactive phones with owners for potential ping check:")
             inactive_phones = [
                 d for d in self.devices.values()
                 if d.device_type == DeviceType.PHONE.value and
@@ -472,22 +491,42 @@ class DeviceManager:
                 d.status != "active" and 
                 d.last_ip
             ]
+            logger.debug(f"Found {len(inactive_phones)} inactive phones with owners to check via ping: {[p.name for p in inactive_phones]}")
             
             for device in inactive_phones:
-                # Try direct ping as last resort
+                logger.debug(f"Attempting ping for inactive phone: {device.name} (Owner: '{device.owner}', IP: {device.last_ip})")
                 if ping_device(device.last_ip):
                     people_count += 1
                     counted_owners.add(device.owner)
-                    logger.info(f"Adding {device.owner} via direct ping to {device.last_ip}")
+                    logger.info(f"Incremented people_count to {people_count}. Added owner '{device.owner}' from device '{device.name}'. Reason: Inactive phone responded to ping.")
+                else:
+                    logger.debug(f"Ping failed for {device.name}.")
             
+            logger.debug(f"After ping check for inactive owned phones: people_count={people_count}, counted_owners={counted_owners}")
+
             # Count unknown phones (without owner) as separate people
+            logger.debug("Processing active or probably present phones without owners:")
             for device in self.devices.values():
-                if ((device.status == "active" or self.is_probably_present(device, current_time)) and 
+                is_active = device.status == "active"
+                is_probable = self.is_probably_present(device, current_time)
+                # Log details for all phones without owners, regardless of active/probable status, for better debugging
+                if device.device_type == DeviceType.PHONE.value and not device.owner and device.count_for_presence:
+                    logger.debug(f"Checking unowned phone: {device.name} (MAC: {device.mac}, Status: {device.status}, Counts: {device.count_for_presence}, IsActive: {is_active}, IsProbable: {is_probable})")
+
+                if ((is_active or is_probable) and 
                     device.count_for_presence and 
                     device.device_type == DeviceType.PHONE.value and
-                    not device.owner):
+                    not device.owner): # Ensure no owner is present for this condition
                     people_count += 1
-                    logger.debug(f"Counting unknown phone as present (phone: {device.name})")
-            
-            logger.info(f"Calculated presence: {people_count} people present")
+                    # We don't add to counted_owners here as there's no owner.
+                    # Each unowned, active/probable phone increments the count.
+                    logger.info(f"Incremented people_count to {people_count}. Added unowned phone '{device.name}'. Reason: Active/Probable phone without owner.")
+                elif device.device_type == DeviceType.PHONE.value and not device.owner and device.count_for_presence:
+                    if not (is_active or is_probable):
+                         logger.debug(f"Skipping unowned phone {device.name}: Not active or probably present.")
+                    elif not device.count_for_presence:
+                         logger.debug(f"Skipping unowned phone {device.name}: count_for_presence is False.")
+
+
+            logger.info(f"Final calculated presence: {people_count} people present")
             return people_count

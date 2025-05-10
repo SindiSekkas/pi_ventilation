@@ -3,6 +3,7 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, ContextTypes, CallbackQueryHandler
+from bot.menu import create_main_menu, create_back_to_main_menu_keyboard, get_main_menu_message
 
 logger = logging.getLogger(__name__)
 
@@ -22,15 +23,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"First user {user_id} registered")
     elif user_auth.is_trusted(user_id):
         # Show menu for trusted users
-        keyboard = [
-            [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
-            [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")],
-            [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")],
-            [InlineKeyboardButton("⚙️ My Preferences", callback_data="my_preferences")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        reply_markup = create_main_menu()
         await update.message.reply_text(
-            f"Hi {user.first_name}! What would you like to do?",
+            get_main_menu_message(user.first_name),
             reply_markup=reply_markup
         )
         logger.info(f"Start command from trusted user {user_id}")
@@ -164,20 +159,22 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         # Cancel add user process
         user_auth.stop_adding_user()
         
-        # Return to main menu - update to include all options
-        keyboard = [
-            [InlineKeyboardButton("👤 Add New User", callback_data="add_user")],
-            [InlineKeyboardButton("🌡️ Ventilation Control", callback_data="vent_menu")],
-            [InlineKeyboardButton("🌙 Sleep Analysis", callback_data="sleep_refresh")],
-            [InlineKeyboardButton("⚙️ My Preferences", callback_data="my_preferences")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
+        # Return to main menu
+        reply_markup = create_main_menu()
         await query.edit_message_text(
-            text=f"Operation cancelled. What would you like to do?",
+            text=f"Operation cancelled. {get_main_menu_message(user.first_name)}",
             reply_markup=reply_markup
         )
         logger.info(f"User {user_id} cancelled add user process via button")
+    
+    elif query.data == "back_to_main":
+        # Return to main menu
+        reply_markup = create_main_menu()
+        await query.edit_message_text(
+            text=get_main_menu_message(user.first_name),
+            reply_markup=reply_markup
+        )
+        logger.info(f"User {user_id} returned to main menu")
     
     elif query.data == "vent_menu":
         from bot.handlers.ventilation import show_vent_menu
@@ -205,5 +202,6 @@ def setup_command_handlers(app):
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("adduser", add_user_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
-    app.add_handler(CallbackQueryHandler(handle_button_callback, pattern='^(add_user|cancel_add_user|vent_menu|sleep_refresh|night_settings|my_preferences)$'))
+    # Add the back_to_main pattern
+    app.add_handler(CallbackQueryHandler(handle_button_callback, pattern='^(add_user|cancel_add_user|vent_menu|sleep_refresh|night_settings|my_preferences|back_to_main)$'))
     logger.info("Command handlers registered")
