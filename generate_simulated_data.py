@@ -34,9 +34,9 @@ MAX_OCCUPANTS = 3
 CO2_GENERATION_PER_PERSON_PER_HOUR = 300  # ppm per person per hour
 CO2_NATURAL_DECAY_RATE_PER_HOUR = 75  # ppm per hour due to natural infiltration
 VENTILATION_EFFECTIVENESS = {
-    "low": 150,      # ppm reduction per hour
-    "medium": 300, 
-    "max": 500
+    "low": 200,      # ppm reduction per hour
+    "medium": 600, 
+    "max": 1056
 }
 INITIAL_CO2 = 450  # ppm
 INITIAL_TEMP = 21.5  # °C
