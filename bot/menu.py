@@ -1,3 +1,4 @@
+# bot/menu.py
 """Menu creation functions for the bot."""
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 

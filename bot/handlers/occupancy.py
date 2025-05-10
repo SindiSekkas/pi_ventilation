@@ -56,7 +56,7 @@ async def show_home_patterns(message, context, is_edit=False):
     
     # Add last update time
     if summary.get("last_update"):
-        last_update = summary["last_update"]
+        last_update = datetime.fromisoformat(summary["last_update"]).strftime('%Y-%m-%d %H:%M')
         text += f"📅 Last updated: {last_update}\n"
     
     # Add total patterns count
@@ -139,8 +139,12 @@ async def show_next_event(message, context, is_edit=False):
     else:
         # House is occupied - predict next departure
         text += f"🏠 *Current Status:* Occupied ({current_occupants} people)\n\n"
-        text += "🔮 *Next Expected Departure:* [To be implemented]\n"
-        text += "⚠️ *Note:* Departure prediction is coming soon!\n"
+        next_departure = occupancy_analyzer.get_next_expected_departure_time(now)
+        
+        if next_departure:
+            text += f"🔮 *Next Expected Departure:* {next_departure.strftime('%Y-%m-%d %H:%M')}\n"
+        else:
+            text += "🔮 *Next Expected Departure:* Uncertain\n"
     
     # Create inline keyboard
     keyboard = [

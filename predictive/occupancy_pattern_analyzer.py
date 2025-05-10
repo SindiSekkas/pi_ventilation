@@ -158,6 +158,36 @@ class OccupancyPatternAnalyzer:
         logger.debug("No confident return time found within 24 hours")
         return None
     
+    def get_next_expected_departure_time(self, current_datetime: datetime) -> Optional[datetime]:
+        """
+        Predict when people are expected to leave if currently occupied.
+        
+        Args:
+            current_datetime: Current datetime
+            
+        Returns:
+            datetime or None: Expected departure time, None if uncertain
+        """
+        # Update probabilities if needed
+        if self._should_reload_history():
+            self._load_and_process_history()
+        
+        # Start from current time and look forward for significant emptiness probability
+        search_datetime = current_datetime
+        max_search_hours = 24  # Don't search beyond 24 hours
+        
+        for hours_ahead in range(max_search_hours + 1):
+            check_datetime = search_datetime + timedelta(hours=hours_ahead)
+            empty_prob = self.get_predicted_empty_probability(check_datetime)
+            
+            # If probability of being empty rises above 0.7, likely departure time
+            if empty_prob > 0.7:
+                logger.info(f"Expected departure time: {check_datetime} (P(EMPTY)={empty_prob:.3f})")
+                return check_datetime
+        
+        logger.debug("No confident departure time found within 24 hours")
+        return None
+    
     def get_expected_empty_duration(self, current_datetime: datetime) -> Optional[timedelta]:
         """
         Predict how long the space will remain empty.
