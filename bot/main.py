@@ -11,7 +11,7 @@ from telegram.ext import Application, CallbackQueryHandler
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import settings
-from config.settings import BOT_TOKEN, ADMIN_ID, DATA_DIR, OCCUPANCY_HISTORY_FILE # Added OCCUPANCY_HISTORY_FILE
+from config.settings import BOT_TOKEN, ADMIN_ID, DATA_DIR, OCCUPANCY_HISTORY_FILE
 
 # Import handlers with proper path resolution
 from bot.handlers.commands import setup_command_handlers
@@ -19,7 +19,10 @@ from bot.handlers.messages import setup_message_handlers
 from bot.user_auth import UserAuth
 from bot.handlers.ventilation import setup_ventilation_handlers, handle_vent_callback
 from bot.handlers.sleep_patterns import setup_sleep_handlers
-from predictive.occupancy_pattern_analyzer import OccupancyPatternAnalyzer # Added import
+from predictive.occupancy_pattern_analyzer import OccupancyPatternAnalyzer
+
+# Import telegram ping worker
+from bot.services import telegram_ping_worker
 
 logger = logging.getLogger(__name__)
 bot_file_handler = logging.FileHandler("bot.log")
@@ -28,7 +31,7 @@ bot_file_handler.setFormatter(bot_file_formatter)
 bot_file_handler.setLevel(logging.INFO)
 logger.addHandler(bot_file_handler)
 
-async def async_main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None, occupancy_analyzer=None): # Added occupancy_analyzer parameter
+async def async_main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None, occupancy_analyzer=None, device_manager=None, telegram_ping_tasks_queue=None):
     """Async main bot function."""
     # Initialize user authentication
     user_auth = UserAuth(DATA_DIR)
@@ -78,7 +81,8 @@ async def async_main(pico_manager=None, controller=None, data_manager=None, slee
     app.bot_data["data_manager"] = data_manager
     app.bot_data["sleep_analyzer"] = sleep_analyzer
     app.bot_data["preference_manager"] = preference_manager
-    app.bot_data["occupancy_analyzer"] = occupancy_analyzer # Added occupancy_analyzer
+    app.bot_data["occupancy_analyzer"] = occupancy_analyzer
+    app.bot_data["device_manager"] = device_manager  # Set device_manager if provided
     
     # Setup handlers
     setup_command_handlers(app)
@@ -102,6 +106,12 @@ async def async_main(pico_manager=None, controller=None, data_manager=None, slee
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)  
         logger.info("Bot polling running in thread")
+        
+        # Start telegram ping worker if queue is provided
+        if telegram_ping_tasks_queue is not None and device_manager is not None:
+            app.create_task(telegram_ping_worker(app.bot, device_manager, telegram_ping_tasks_queue))
+            logger.info("Started Telegram ping worker")
+        
         try:
             # Run until the main app stops
             while True: # Ensure this loop is managed correctly in your application lifecycle
@@ -112,7 +122,7 @@ async def async_main(pico_manager=None, controller=None, data_manager=None, slee
             await app.stop()
             await app.shutdown()
 
-def main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None, occupancy_analyzer=None): # Added occupancy_analyzer parameter
+def main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None, occupancy_analyzer=None, device_manager=None, telegram_ping_tasks_queue=None):
     """Start the bot with proper event loop handling."""
     try:
         logger.info("Starting telegram bot")
@@ -124,10 +134,10 @@ def main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=N
         # Run the bot with the appropriate mode based on thread
         if threading.current_thread() is threading.main_thread():
             # In main thread, we can use run_until_complete
-            loop.run_until_complete(async_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager, occupancy_analyzer)) # Pass occupancy_analyzer
+            loop.run_until_complete(async_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager, occupancy_analyzer, device_manager, telegram_ping_tasks_queue))
         else:
             # In a separate thread, run without blocking
-            loop.create_task(async_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager, occupancy_analyzer)) # Pass occupancy_analyzer
+            loop.create_task(async_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager, occupancy_analyzer, device_manager, telegram_ping_tasks_queue))
             loop.run_forever()
         
     except Exception as e:

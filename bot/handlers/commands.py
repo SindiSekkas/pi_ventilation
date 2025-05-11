@@ -1,6 +1,7 @@
 # bot/handlers/commands.py
 """Command handlers for the bot."""
 import logging
+import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, ContextTypes, CallbackQueryHandler
 from bot.menu import create_main_menu, create_back_to_main_menu_keyboard, get_main_menu_message
@@ -59,6 +60,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         /setco2comfort [threshold] - Set CO2 comfort threshold
         /homepatterns - Show home occupancy patterns
         /nextevent - Show next expected home activity change
+        /linkphone [MAC-address] - Link your phone for presence detection
+        /unlinkphone [MAC-address] - Unlink your phone from presence detection
 
         Ventilation commands:
         /vent - Show ventilation control menu
@@ -85,6 +88,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         - Configure CO2 threshold
         - Adjust humidity preferences
         - Provide comfort feedback
+
+        Phone Linking:
+        - Link your phone to get better presence detection
+        - Phone will receive silent wake-up pings when offline
+        - Better accuracy for occupancy tracking
     """
     await update.message.reply_text(help_text)
     logger.info(f"Help command from user {user_id}")
@@ -131,6 +139,134 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"User {user_id} cancelled add user process")
     else:
         await update.message.reply_text("No active operation to cancel.")
+
+async def linkphone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /linkphone command."""
+    user = update.effective_user
+    user_id = user.id
+    user_auth = context.application.bot_data["user_auth"]
+    
+    if not user_auth.is_trusted(user_id):
+        await update.message.reply_text("Sorry, you are not authorized to use this bot.")
+        logger.warning(f"Unauthorized linkphone attempt from user {user_id}")
+        return
+    
+    # Parse arguments
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "Usage: /linkphone <MAC-address>\n"
+            "Example: /linkphone aa:bb:cc:dd:ee:ff"
+        )
+        return
+    
+    mac_address = context.args[0].lower()
+    
+    # Validate MAC address format
+    if not re.match(r'^([0-9a-f]{2}[:-]){5}([0-9a-f]{2})$', mac_address):
+        await update.message.reply_text("Please enter a valid MAC address (e.g., aa:bb:cc:dd:ee:ff)")
+        return
+    
+    # Get device manager
+    device_manager = context.application.bot_data.get("device_manager")
+    if not device_manager:
+        await update.message.reply_text("Device management is not available.")
+        return
+    
+    # Check if device exists
+    found_device = None
+    for mac, device in device_manager.devices.items():
+        if mac.lower() == mac_address.lower():
+            found_device = device
+            break
+    
+    if not found_device:
+        # Device not found - offer to create it
+        await update.message.reply_text(
+            f"Device with MAC {mac_address} not found in the system.\n"
+            "Please ensure your phone is currently connected to the network first."
+        )
+        return
+    
+    # Verify it's a phone
+    if found_device.device_type != "phone":
+        await update.message.reply_text(
+            f"Device {mac_address} is not a phone (it's a {found_device.device_type}).\n"
+            "You can only link phone devices."
+        )
+        return
+    
+    # Link device to user
+    success = device_manager.link_device_to_telegram_user(mac_address, user_id)
+    
+    if success:
+        await update.message.reply_text(
+            f"✅ Your phone with MAC {mac_address} has been linked to your Telegram account for presence checks.\n"
+            "You may receive silent notifications when your phone appears offline to help improve presence detection."
+        )
+        logger.info(f"User {user_id} linked phone {mac_address}")
+    else:
+        await update.message.reply_text("Failed to link your phone. Please try again later.")
+        logger.error(f"Failed to link phone {mac_address} for user {user_id}")
+
+async def unlinkphone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /unlinkphone command."""
+    user = update.effective_user
+    user_id = user.id
+    user_auth = context.application.bot_data["user_auth"]
+    
+    if not user_auth.is_trusted(user_id):
+        await update.message.reply_text("Sorry, you are not authorized to use this bot.")
+        logger.warning(f"Unauthorized unlinkphone attempt from user {user_id}")
+        return
+    
+    # Parse arguments
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "Usage: /unlinkphone <MAC-address>\n"
+            "Example: /unlinkphone aa:bb:cc:dd:ee:ff"
+        )
+        return
+    
+    mac_address = context.args[0].lower()
+    
+    # Validate MAC address format
+    if not re.match(r'^([0-9a-f]{2}[:-]){5}([0-9a-f]{2})$', mac_address):
+        await update.message.reply_text("Please enter a valid MAC address (e.g., aa:bb:cc:dd:ee:ff)")
+        return
+    
+    # Get device manager
+    device_manager = context.application.bot_data.get("device_manager")
+    if not device_manager:
+        await update.message.reply_text("Device management is not available.")
+        return
+    
+    # Check if device exists and is linked to this user
+    found_device = None
+    for mac, device in device_manager.devices.items():
+        if mac.lower() == mac_address.lower():
+            found_device = device
+            break
+    
+    if not found_device:
+        await update.message.reply_text(f"Device with MAC {mac_address} not found in the system.")
+        return
+    
+    if found_device.telegram_user_id != user_id:
+        await update.message.reply_text(f"Device {mac_address} is not linked to your account.")
+        return
+    
+    # Unlink device
+    success = device_manager.unlink_device_from_telegram_user(mac_address)
+    
+    if success:
+        await update.message.reply_text(
+            f"✅ Your phone with MAC {mac_address} has been unlinked from your Telegram account.\n"
+            "You will no longer receive notifications for this device."
+        )
+        logger.info(f"User {user_id} unlinked phone {mac_address}")
+    else:
+        await update.message.reply_text("Failed to unlink your phone. Please try again later.")
+        logger.error(f"Failed to unlink phone {mac_address} for user {user_id}")
 
 async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle button callback queries."""
@@ -214,6 +350,8 @@ def setup_command_handlers(app):
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("adduser", add_user_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
+    app.add_handler(CommandHandler("linkphone", linkphone_command))
+    app.add_handler(CommandHandler("unlinkphone", unlinkphone_command))
     # Add the back_to_main pattern
     app.add_handler(CallbackQueryHandler(handle_button_callback, pattern='^(add_user|cancel_add_user|vent_menu|sleep_refresh|night_settings|my_preferences|back_to_main)$'))
     logger.info("Command handlers registered")

@@ -98,6 +98,11 @@ class Device:
         self.last_ip = None  # Last known IP address
         self.wol_success_count = 0  # Count of successful wake attempts
         self.wol_failure_count = 0  # Count of failed wake attempts
+        
+        # Telegram ping support
+        self.telegram_user_id = None  # ID of Telegram user associated with this device
+        self.last_telegram_ping_request_time = None  # Timestamp of last Telegram ping request
+        self.is_pending_telegram_ping = False  # Flag for pending Telegram ping result
     
     def record_connection(self):
         """Record a connection event."""
@@ -177,7 +182,10 @@ class Device:
             "supports_wol": self.supports_wol,
             "last_ip": self.last_ip,
             "wol_success_count": self.wol_success_count,
-            "wol_failure_count": self.wol_failure_count
+            "wol_failure_count": self.wol_failure_count,
+            "telegram_user_id": self.telegram_user_id,
+            "last_telegram_ping_request_time": self.last_telegram_ping_request_time,
+            "is_pending_telegram_ping": self.is_pending_telegram_ping
         }
         
     @classmethod
@@ -209,5 +217,10 @@ class Device:
         device.last_ip = data.get("last_ip")
         device.wol_success_count = data.get("wol_success_count", 0)
         device.wol_failure_count = data.get("wol_failure_count", 0)
+        
+        # Load Telegram ping properties
+        device.telegram_user_id = data.get("telegram_user_id")
+        device.last_telegram_ping_request_time = data.get("last_telegram_ping_request_time")
+        device.is_pending_telegram_ping = data.get("is_pending_telegram_ping", False)
         
         return device

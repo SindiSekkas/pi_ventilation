@@ -6,6 +6,7 @@ import time
 import logging
 import threading
 import subprocess
+import queue
 from datetime import datetime
 
 # Setup logging before imports
@@ -39,14 +40,14 @@ from preferences.preference_manager import PreferenceManager
 from presence.occupancy_history_manager import OccupancyHistoryManager
 from predictive.occupancy_pattern_analyzer import OccupancyPatternAnalyzer
 
-def run_bot(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None, occupancy_analyzer=None):
+def run_bot(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None, occupancy_analyzer=None, device_manager=None, telegram_ping_tasks_queue=None):
     """Run the Telegram bot in a separate process."""
     try:
         # Import bot main
         from bot.main import main as bot_main
         
         # Run bot with passed components
-        bot_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager, occupancy_analyzer)
+        bot_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager, occupancy_analyzer, device_manager, telegram_ping_tasks_queue)
     except Exception as e:
         logger.error(f"Error in bot process: {e}", exc_info=True)
         # Don't exit, just log the error and continue
@@ -79,8 +80,11 @@ def main():
             logger.error("Failed to start sensor reader")
             return 1
 
-        # Initialize device manager
-        device_manager = DeviceManager(data_dir=os.path.join(DATA_DIR, "presence"))   
+        # Create telegram_ping_tasks_queue
+        telegram_ping_tasks_queue = queue.Queue()
+
+        # Initialize device manager with Telegram ping queue
+        device_manager = DeviceManager(data_dir=os.path.join(DATA_DIR, "presence"), telegram_ping_queue=telegram_ping_tasks_queue)   
 
         # Initialize preference manager with updated data_dir parameter
         preference_manager = PreferenceManager(data_dir=DATA_DIR)
@@ -138,7 +142,7 @@ def main():
             logger.info("Starting Telegram bot")
             bot_thread = threading.Thread(
                 target=run_bot, 
-                args=(pico_manager, markov_controller, data_manager, sleep_analyzer, preference_manager, occupancy_pattern_analyzer),
+                args=(pico_manager, markov_controller, data_manager, sleep_analyzer, preference_manager, occupancy_pattern_analyzer, device_manager, telegram_ping_tasks_queue),
                 daemon=True
             )
             bot_thread.start()

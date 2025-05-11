@@ -15,19 +15,21 @@ logger = logging.getLogger(__name__)
 class DeviceManager:
     """Manages devices for presence detection."""
     
-    def __init__(self, data_dir="data/presence", notification_callback=None):
+    def __init__(self, data_dir="data/presence", notification_callback=None, telegram_ping_queue=None):
         """
         Initialize the device manager.
         
         Args:
             data_dir: Directory to store device data
             notification_callback: Function to call when new devices are found
+            telegram_ping_queue: Queue for Telegram ping tasks
         """
         self.data_dir = data_dir
         os.makedirs(data_dir, exist_ok=True)
         self.devices_file = os.path.join(data_dir, "devices.json")
         self.devices = {}
         self.notification_callback = notification_callback
+        self.telegram_ping_queue = telegram_ping_queue
         self._load_devices()
         
         # Lock for thread safety
@@ -36,6 +38,7 @@ class DeviceManager:
         # System parameters
         self.phone_offline_threshold = 5  # How many scans before marking phone offline
         self.sleep_hours = (23, 7)  # Between 11 PM and 7 AM
+        self.TELEGRAM_PING_COOLDOWN_MINUTES = 10  # Minimum interval between Telegram pings
         
         # Store last scan results for reference
         self._last_scan_results = []
@@ -176,6 +179,57 @@ class DeviceManager:
                             self._save_devices()
                         return status_changed
                 
+                # Check for Telegram ping requirements
+                if (device.device_type == DeviceType.PHONE.value and 
+                    device.count_for_presence and 
+                    device.telegram_user_id is not None and 
+                    device.last_ip and 
+                    not is_online):
+                    
+                    # Check if cooldown has passed
+                    if device.last_telegram_ping_request_time is not None:
+                        last_ping_time = datetime.fromisoformat(device.last_telegram_ping_request_time)
+                        time_since_ping = (now - last_ping_time).total_seconds() / 60  # minutes
+                        
+                        if time_since_ping < self.TELEGRAM_PING_COOLDOWN_MINUTES:
+                            logger.debug(f"Telegram ping cooldown not expired for {device.name} ({time_since_ping:.1f} < {self.TELEGRAM_PING_COOLDOWN_MINUTES} minutes)")
+                        else:
+                            # Queue Telegram ping
+                            if self.telegram_ping_queue is not None:
+                                ping_task = {
+                                    'mac': device.mac,
+                                    'telegram_user_id': device.telegram_user_id,
+                                    'ip_address': device.last_ip
+                                }
+                                try:
+                                    self.telegram_ping_queue.put(ping_task)
+                                    device.last_telegram_ping_request_time = now.isoformat()
+                                    device.is_pending_telegram_ping = True
+                                    self._save_devices()
+                                    logger.info(f"Queued Telegram ping for {device.name} (MAC: {device.mac})")
+                                    # Don't update status yet - wait for ping result
+                                    return False
+                                except Exception as e:
+                                    logger.error(f"Failed to queue Telegram ping: {e}")
+                    else:
+                        # First time pinging
+                        if self.telegram_ping_queue is not None:
+                            ping_task = {
+                                'mac': device.mac,
+                                'telegram_user_id': device.telegram_user_id,
+                                'ip_address': device.last_ip
+                            }
+                            try:
+                                self.telegram_ping_queue.put(ping_task)
+                                device.last_telegram_ping_request_time = now.isoformat()
+                                device.is_pending_telegram_ping = True
+                                self._save_devices()
+                                logger.info(f"Queued first Telegram ping for {device.name} (MAC: {device.mac})")
+                                # Don't update status yet - wait for ping result
+                                return False
+                            except Exception as e:
+                                logger.error(f"Failed to queue Telegram ping: {e}")
+                
                 # Additional checks only for important devices (phones)
                 if (device.device_type == DeviceType.PHONE.value and 
                     device.count_for_presence and device.last_ip):
@@ -235,6 +289,53 @@ class DeviceManager:
                 self._update_active_hours(device, now, is_online)
         
         return status_changed
+
+    def process_telegram_ping_result(self, mac: str, detected_after_ping: bool):
+        """
+        Process the result of a Telegram ping attempt.
+        
+        Args:
+            mac: MAC address of the device
+            detected_after_ping: Whether device was detected after ping
+        
+        Returns:
+            bool: Whether status changed
+        """
+        with self._lock:
+            mac = mac.lower()
+            if mac not in self.devices:
+                logger.warning(f"Device {mac} not found for Telegram ping result")
+                return False
+            
+            device = self.devices[mac]
+            device.is_pending_telegram_ping = False
+            
+            if detected_after_ping:
+                # Device was found after ping - mark as active
+                device.status = "active"
+                device.offline_count = 0
+                device.record_connection()
+                logger.info(f"Device {device.name} detected after Telegram ping")
+                self._save_devices()
+                return True
+            else:
+                # Device was not found - increment offline count
+                device.offline_count += 1
+                logger.debug(f"Device {device.name} not detected after Telegram ping")
+                
+                # Check if we should mark as inactive
+                now = datetime.now()
+                offline_threshold = self._get_offline_threshold(device, now)
+                
+                if device.offline_count > offline_threshold and device.status == "active":
+                    device.status = "inactive"
+                    device.record_disconnection()
+                    logger.info(f"Device {device.name} marked inactive after failed Telegram ping")
+                    self._save_devices()
+                    return True
+        
+        self._save_devices()
+        return False
 
     def check_arp_table(self, mac):
         """
@@ -432,6 +533,53 @@ class DeviceManager:
                                     vendor=vendor,
                                     confidence=device.confidence_score)
         
+        return True
+
+    def link_device_to_telegram_user(self, mac: str, telegram_user_id: int) -> bool:
+        """
+        Link a device to a Telegram user for ping functionality.
+        
+        Args:
+            mac: MAC address of device
+            telegram_user_id: Telegram user ID
+        
+        Returns:
+            bool: Success status
+        """
+        with self._lock:
+            mac = mac.lower()
+            if mac not in self.devices:
+                return False
+            
+            self.devices[mac].telegram_user_id = telegram_user_id
+            
+        # Save changes
+        self._save_devices()
+        logger.info(f"Linked device {mac} to Telegram user {telegram_user_id}")
+        return True
+
+    def unlink_device_from_telegram_user(self, mac: str) -> bool:
+        """
+        Unlink a device from its Telegram user.
+        
+        Args:
+            mac: MAC address of device
+        
+        Returns:
+            bool: Success status
+        """
+        with self._lock:
+            mac = mac.lower()
+            if mac not in self.devices:
+                return False
+            
+            self.devices[mac].telegram_user_id = None
+            self.devices[mac].last_telegram_ping_request_time = None
+            self.devices[mac].is_pending_telegram_ping = False
+            
+        # Save changes
+        self._save_devices()
+        logger.info(f"Unlinked device {mac} from Telegram user")
         return True
 
     def set_notification_callback(self, callback):

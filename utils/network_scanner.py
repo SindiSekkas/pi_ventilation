@@ -1,14 +1,13 @@
-# utils/network_scanner.py
-
 """Network scanner for presence detection."""
 import subprocess
 import re
 import logging
 from datetime import datetime
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-def scan_network():
+def scan_network(target_ip: Optional[str] = None):
     """
     Scan local network for devices using BOTH arp-scan AND ARP table.
     Returns combined list of all found devices.
@@ -17,12 +16,20 @@ def scan_network():
     
     # PART 1: ARP-SCAN
     try:
-        logger.info("Running arp-scan to find devices")
-        result = subprocess.run(
-            ["sudo", "arp-scan", "--localnet"], 
-            capture_output=True, text=True,
-            timeout=30
-        )
+        if target_ip:
+            logger.info(f"Running targeted arp-scan for {target_ip}")
+            result = subprocess.run(
+                ["sudo", "arp-scan", target_ip], 
+                capture_output=True, text=True,
+                timeout=10
+            )
+        else:
+            logger.info("Running arp-scan to find devices")
+            result = subprocess.run(
+                ["sudo", "arp-scan", "--localnet"], 
+                capture_output=True, text=True,
+                timeout=30
+            )
         
         for line in result.stdout.splitlines():
             match = re.search(r'(\d+\.\d+\.\d+\.\d+)\s+([0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2})\s+(.+?)(?:\s+\(DUP: \d+\))?$', line)
@@ -36,6 +43,12 @@ def scan_network():
         logger.info(f"ARP-SCAN found {len(devices)} devices")
     except Exception as e:
         logger.error(f"Error in arp-scan: {e}")
+    
+    # Skip ARP table check for targeted scans
+    if target_ip:
+        device_list = list(devices.values())
+        logger.info(f"Targeted scan found {len(device_list)} devices")
+        return device_list
     
     # PART 2: READ /proc/net/arp FILE
     try:
