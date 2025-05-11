@@ -62,6 +62,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         /nextevent - Show next expected home activity change
         /linkphone [MAC-address] - Link your phone for presence detection
         /unlinkphone [MAC-address] - Unlink your phone from presence detection
+        /pingphone [MAC-address] - Test Telegram ping for your phone
 
         Ventilation commands:
         /vent - Show ventilation control menu
@@ -268,6 +269,67 @@ async def unlinkphone_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("Failed to unlink your phone. Please try again later.")
         logger.error(f"Failed to unlink phone {mac_address} for user {user_id}")
 
+async def ping_phone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle command to manually test Telegram ping."""
+    user = update.effective_user
+    user_id = user.id
+    user_auth = context.application.bot_data["user_auth"]
+    
+    if not user_auth.is_trusted(user_id):
+        await update.message.reply_text("Sorry, you are not authorized to use this bot.")
+        logger.warning(f"Unauthorized pingphone command from user {user_id}")
+        return
+    
+    # Parse arguments
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "Usage: /pingphone <MAC-address>\\n"
+            "Example: /pingphone aa:bb:cc:dd:ee:ff"
+        )
+        return
+    
+    mac_address = context.args[0].lower()
+    
+    # Validate MAC address format
+    if not re.match(r'^([0-9a-f]{2}[:-]){5}([0-9a-f]{2})$', mac_address):
+        await update.message.reply_text("Please enter a valid MAC address (e.g., aa:bb:cc:dd:ee:ff)")
+        return
+    
+    # Get device manager
+    device_manager = context.application.bot_data.get("device_manager")
+    if not device_manager:
+        await update.message.reply_text("Device management is not available.")
+        return
+    
+    # Check if device exists and is linked to this user
+    found_device = None
+    for mac, device in device_manager.devices.items():
+        if mac.lower() == mac_address.lower():
+            found_device = device
+            break
+    
+    if not found_device:
+        await update.message.reply_text(f"Device with MAC {mac_address} not found in the system.")
+        return
+    
+    if found_device.telegram_user_id != user_id:
+        await update.message.reply_text(f"Device {mac_address} is not linked to your account.")
+        return
+    
+    # Queue Telegram ping task
+    telegram_ping_queue = context.application.bot_data.get("telegram_ping_tasks_queue")
+    if telegram_ping_queue:
+        ping_task = {
+            'mac': found_device.mac,
+            'telegram_user_id': user_id,
+            'ip_address': found_device.last_ip or None
+        }
+        telegram_ping_queue.put(ping_task)
+        await update.message.reply_text("🔔 Telegram ping sent to your phone. Check your notifications!")
+        logger.info(f"Manual Telegram ping requested for {mac_address} by user {user_id}")
+    else:
+        await update.message.reply_text("Telegram ping queue is not available.")
+
 async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle button callback queries."""
     query = update.callback_query
@@ -352,6 +414,6 @@ def setup_command_handlers(app):
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("linkphone", linkphone_command))
     app.add_handler(CommandHandler("unlinkphone", unlinkphone_command))
-    # Add the back_to_main pattern
+    app.add_handler(CommandHandler("pingphone", ping_phone_command))
     app.add_handler(CallbackQueryHandler(handle_button_callback, pattern='^(add_user|cancel_add_user|vent_menu|sleep_refresh|night_settings|my_preferences|back_to_main)$'))
     logger.info("Command handlers registered")

@@ -26,9 +26,9 @@ async def telegram_ping_worker(bot: Bot, device_manager: DeviceManager, telegram
             
             mac = task_data['mac']
             telegram_user_id = task_data['telegram_user_id']
-            ip_address = task_data['ip_address']
+            ip_address = task_data.get('ip_address') # Make IP address optional
             
-            logger.info(f"Processing Telegram ping for device {mac} (user {telegram_user_id})")
+            logger.info(f"Processing Telegram ping for device {mac} (user {telegram_user_id}, IP: {ip_address})")
             
             # Send silent message
             try:
@@ -58,15 +58,24 @@ async def telegram_ping_worker(bot: Bot, device_manager: DeviceManager, telegram
                 continue
             
             # Wait for device to wake up
-            await asyncio.sleep(10)
+            await asyncio.sleep(15) # Wait a bit for device to potentially reconnect
             
             # Scan for device
             try:
-                scan_results = scan_network(target_ip=ip_address)
-                detected = any(entry[0].lower() == mac.lower() for entry in scan_results)
+                detected_after_ping = False
+                if ip_address:
+                    scan_results = scan_network(target_ip=ip_address)
+                else:
+                    scan_results = scan_network()  # Полный скан сети
                 
-                logger.debug(f"Post-ping scan result for {mac}: detected={detected}")
-                device_manager.process_telegram_ping_result(mac, detected)
+                for device_mac, device_ip, _ in scan_results:
+                    if device_mac.lower() == mac.lower():
+                        detected_after_ping = True
+                        logger.info(f"Device {mac} detected on network after Telegram ping (IP: {device_ip})")
+                        break
+                
+                logger.debug(f"Post-ping scan result for {mac}: detected={detected_after_ping}")
+                device_manager.process_telegram_ping_result(mac, detected_after_ping)
                 
             except Exception as e:
                 logger.error(f"Error during post-ping scan for {mac}: {e}")

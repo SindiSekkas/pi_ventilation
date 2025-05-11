@@ -162,8 +162,7 @@ class DeviceManager:
                 # For phones with Telegram-ping capability, prioritize Telegram-ping
                 if (device.device_type == DeviceType.PHONE.value and 
                     device.count_for_presence and 
-                    device.telegram_user_id is not None and 
-                    device.last_ip):
+                    device.telegram_user_id is not None):
                     
                     # Check if cooldown has passed
                     if device.last_telegram_ping_request_time is not None:
@@ -178,7 +177,7 @@ class DeviceManager:
                                 ping_task = {
                                     'mac': device.mac,
                                     'telegram_user_id': device.telegram_user_id,
-                                    'ip_address': device.last_ip
+                                    'ip_address': device.last_ip or None
                                 }
                                 try:
                                     self.telegram_ping_queue.put(ping_task)
@@ -196,7 +195,7 @@ class DeviceManager:
                             ping_task = {
                                 'mac': device.mac,
                                 'telegram_user_id': device.telegram_user_id,
-                                'ip_address': device.last_ip
+                                'ip_address': device.last_ip or None
                             }
                             try:
                                 self.telegram_ping_queue.put(ping_task)
@@ -494,6 +493,8 @@ class DeviceManager:
                 return False
             
             self.devices[mac].telegram_user_id = telegram_user_id
+            if not self.devices[mac].owner:
+                self.devices[mac].owner = f"TelegramUser_{telegram_user_id}"
             
         # Save changes
         self._save_devices()
