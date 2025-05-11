@@ -113,38 +113,35 @@ async def show_next_event(message, context, is_edit=False):
     current_occupants = data_manager.latest_data["room"]["occupants"]
     now = datetime.now()
     
+    # Get next significant event
+    next_event = occupancy_analyzer.get_next_significant_event(now)
+    
+    # Get current period information
+    current_period = occupancy_analyzer.get_predicted_current_period(now)
+    
     # Format message based on current occupancy status
     text = "*Next Home Activity Event*\n\n"
     
-    if current_occupants == 0:
-        # House is empty - predict next return
-        next_return = occupancy_analyzer.get_next_expected_return_time(now)
-        empty_duration = occupancy_analyzer.get_expected_empty_duration(now)
-        
-        text += "🏠 *Current Status:* Empty\n\n"
-        
-        if next_return:
-            text += f"🔮 *Next Expected Return:* {next_return.strftime('%Y-%m-%d %H:%M')}\n"
-        else:
-            text += "🔮 *Next Expected Return:* Uncertain\n"
-        
-        if empty_duration:
-            hours = empty_duration.total_seconds() / 3600
-            if hours < 1:
-                text += f"⏱️ *Expected Empty Duration:* {int(empty_duration.total_seconds() / 60)} minutes\n"
-            else:
-                text += f"⏱️ *Expected Empty Duration:* {hours:.1f} hours\n"
-        else:
-            text += "⏱️ *Expected Empty Duration:* Uncertain\n"
+    # Show current status
+    text += f"🏠 *Current Status:* {'Empty' if current_occupants == 0 else f'Occupied ({current_occupants} people)'}\n\n"
+    
+    # Show current period information
+    if current_period[0] and current_period[1] and current_period[2]:
+        period_start, period_end, period_status, period_confidence = current_period
+        status_icon = "🏠" if period_status == "EXPECTED_OCCUPIED" else "🌙"
+        text += f"{status_icon} *Current Period:* {period_status.replace('EXPECTED_', '').title()}\n"
+        text += f"📅 Period: {period_start.strftime('%Y-%m-%d %H:%M')} to {period_end.strftime('%Y-%m-%d %H:%M')}\n"
+        text += f"📊 Confidence: {period_confidence:.1%}\n\n"
+    
+    # Show next event information
+    if next_event[0] and next_event[1]:
+        event_time, event_type, event_confidence = next_event
+        event_icon = "🏠" if event_type == "EXPECTED_ARRIVAL" else "🚪"
+        text += f"{event_icon} *Next Event:* {event_type.replace('EXPECTED_', '').title()}\n"
+        text += f"⏰ Time: {event_time.strftime('%Y-%m-%d %H:%M')}\n"
+        text += f"📊 Confidence: {event_confidence:.1%}\n"
     else:
-        # House is occupied - predict next departure
-        text += f"🏠 *Current Status:* Occupied ({current_occupants} people)\n\n"
-        next_departure = occupancy_analyzer.get_next_expected_departure_time(now)
-        
-        if next_departure:
-            text += f"🔮 *Next Expected Departure:* {next_departure.strftime('%Y-%m-%d %H:%M')}\n"
-        else:
-            text += "🔮 *Next Expected Departure:* Uncertain\n"
+        text += "🔮 *Next Event:* Unable to predict with confidence\n"
     
     # Create inline keyboard
     keyboard = [
@@ -165,6 +162,8 @@ async def show_home_activity_menu(query_or_message, context, is_edit=True):
     keyboard = [
         [InlineKeyboardButton("📊 Show Patterns", callback_data="show_home_patterns")],
         [InlineKeyboardButton("🔮 Next Event", callback_data="show_next_event")],
+        [InlineKeyboardButton("✅ I'm Home (Correct)", callback_data="occupancy_feedback_im_home"),
+         InlineKeyboardButton("❌ I'm Away (Correct)", callback_data="occupancy_feedback_im_away")],
         [InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -220,10 +219,57 @@ async def handle_occupancy_callback(update: Update, context: ContextTypes.DEFAUL
     elif query.data == "refresh_next_event":
         await show_next_event(query.message, context, is_edit=True)
         logger.info(f"User {user_id} refreshed next event")
+    
+    elif query.data == "occupancy_feedback_im_home":
+        await handle_occupancy_feedback(update, context, "USER_CONFIRMED_HOME")
+    
+    elif query.data == "occupancy_feedback_im_away":
+        await handle_occupancy_feedback(update, context, "USER_CONFIRMED_AWAY")
+
+async def handle_occupancy_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE, feedback_status: str):
+    """Handle user feedback about their current occupancy status."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    occupancy_analyzer = context.application.bot_data.get("occupancy_analyzer")
+    
+    if not occupancy_analyzer:
+        await query.edit_message_text(
+            "⚠️ Unable to process feedback at this time.",
+            reply_markup=create_back_to_main_menu_keyboard()
+        )
+        return
+    
+    # Record the feedback
+    now = datetime.now()
+    occupancy_analyzer.record_user_feedback(now, feedback_status)
+    
+    # Show confirmation message
+    feedback_text = "Thanks for the feedback! I'll update my predictions.\n\n"
+    
+    if feedback_status == "USER_CONFIRMED_HOME":
+        feedback_text += "✅ I've noted that you're currently home."
+    else:
+        feedback_text += "❌ I've noted that you're currently away."
+    
+    feedback_text += "\n\nThis helps improve future occupancy predictions."
+    
+    # Create keyboard to return to menu or main
+    keyboard = [
+        [InlineKeyboardButton("🏠 Back to Home Activity", callback_data="home_activity_menu")],
+        [InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        feedback_text,
+        reply_markup=reply_markup
+    )
+    
+    logger.info(f"User {user_id} provided occupancy feedback: {feedback_status}")
 
 def setup_occupancy_handlers(app):
     """Register occupancy handlers."""
     app.add_handler(CommandHandler("homepatterns", show_home_patterns_command))
     app.add_handler(CommandHandler("nextevent", show_next_event_command))
-    app.add_handler(CallbackQueryHandler(handle_occupancy_callback, pattern='^(home_activity_menu|show_home_patterns|show_next_event|refresh_home_patterns|refresh_next_event)$'))
+    app.add_handler(CallbackQueryHandler(handle_occupancy_callback, pattern='^(home_activity_menu|show_home_patterns|show_next_event|refresh_home_patterns|refresh_next_event|occupancy_feedback_im_home|occupancy_feedback_im_away)$'))
     logger.info("Occupancy handlers registered")

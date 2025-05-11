@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# generate_simulated_data.py
 """
 Improved ventilation system data simulator with realistic occupancy patterns.
 """

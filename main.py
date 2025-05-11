@@ -39,14 +39,14 @@ from preferences.preference_manager import PreferenceManager
 from presence.occupancy_history_manager import OccupancyHistoryManager
 from predictive.occupancy_pattern_analyzer import OccupancyPatternAnalyzer
 
-def run_bot(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None):
+def run_bot(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None, occupancy_analyzer=None):
     """Run the Telegram bot in a separate process."""
     try:
         # Import bot main
         from bot.main import main as bot_main
         
         # Run bot with passed components
-        bot_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager)
+        bot_main(pico_manager, controller, data_manager, sleep_analyzer, preference_manager, occupancy_analyzer)
     except Exception as e:
         logger.error(f"Error in bot process: {e}", exc_info=True)
         # Don't exit, just log the error and continue
@@ -138,7 +138,7 @@ def main():
             logger.info("Starting Telegram bot")
             bot_thread = threading.Thread(
                 target=run_bot, 
-                args=(pico_manager, markov_controller, data_manager, sleep_analyzer, preference_manager),
+                args=(pico_manager, markov_controller, data_manager, sleep_analyzer, preference_manager, occupancy_pattern_analyzer),
                 daemon=True
             )
             bot_thread.start()
