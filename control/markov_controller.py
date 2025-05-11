@@ -130,6 +130,7 @@ class MarkovController:
         self.learning_rate = 0.1  # How quickly model adapts to new information
         self.exploration_rate = 0.2  # Chance of trying random action
         self.random_action_decay = 0.9999  # Decay rate for exploration
+        self.last_best_value = float('-inf') # ADDED THIS LINE
         
         # Night mode settings
         self.night_mode_enabled = True
@@ -137,7 +138,7 @@ class MarkovController:
         self.night_mode_end_hour = 7
         
         # Initialize with -1 to ensure first update is logged
-        self.last_applied_occupants = -1
+        self.last_applied_occupants = -1 # Initialize with a value that won't match any real occupancy
         
         # Load night mode settings from file
         self._load_night_mode_settings()
@@ -679,7 +680,20 @@ class MarkovController:
                     else: # Target is strictly LOW
                         co2_reward = 0.2 # Still better than HIGH
                 elif co2_level_next == CO2Level.HIGH.value:
-                    co2_reward = -3.0 # Strong penalty
+                    # Larger penalty for occupied rooms, but not extreme
+                    base_penalty = -3.0
+                    if occupancy_level_next == Occupancy.OCCUPIED.value:
+                        # Progressive penalty depending on actual CO2 level
+                        co2 = self.data_manager.latest_data["scd41"]["co2"]
+                        if co2:
+                            # Larger penalty for higher CO2 levels
+                            co2_excess = max(0, co2 - active_co2_thr.get("medium_max", 1000))
+                            co2_penalty_factor = min(4.0, 1.0 + (co2_excess / 500))  # Capped at max 4x
+                            co2_reward = base_penalty * co2_penalty_factor
+                        else:
+                            co2_reward = base_penalty * 2.5  # If no data, use moderate multiplier
+                    else:
+                        co2_reward = base_penalty  # Standard penalty for empty rooms
 
                 # 2. Temperature Component
                 target_temp_min = active_temp_thr.get("low_max", 20)
@@ -698,6 +712,14 @@ class MarkovController:
                         if target_temp_min < 19: temp_reward += 0.3 # Even better if target is very cool
                     else: # Target is warmer, LOW is bad
                         temp_reward = -1.0 - (target_temp_min - 20) * 0.2 # Penalty increases with deviation
+                    
+                    # Add additional penalty for cooling if already cold and CO2 is not critical
+                    current_temp = self.data_manager.latest_data["scd41"]["temperature"]
+                    current_co2 = self.data_manager.latest_data["scd41"]["co2"]
+                    if (current_temp and current_temp < 19.0 and
+                        action_key_str != Action.TURN_OFF.value and # Check against Enum value
+                        current_co2 and current_co2 < 1200):
+                        temp_reward -= 0.5  # Moderate additional penalty
                 elif temp_level_next == TemperatureLevel.HIGH.value: # Approx >24C
                     if target_temp_max >= 24: # Target allows or prefers warm
                         temp_reward = 0.5 # Acceptable
@@ -715,11 +737,11 @@ class MarkovController:
                 
                 # 4. Energy Cost Component
                 if action_key_str == Action.TURN_ON_MAX.value:
-                    energy_cost = -0.5 # Adjusted from -1.0
+                    energy_cost = -0.5 
                 elif action_key_str == Action.TURN_ON_MEDIUM.value:
-                    energy_cost = -0.3 # Adjusted from -0.6
+                    energy_cost = -0.3 
                 elif action_key_str == Action.TURN_ON_LOW.value:
-                    energy_cost = -0.1 # Adjusted from -0.3
+                    energy_cost = -0.25 # Updated penalty for low speed
 
                 current_state_value = co2_reward + temp_reward + occupancy_reward + energy_cost
                 
@@ -736,19 +758,63 @@ class MarkovController:
                 best_value = action_total_expected_value
                 best_action = action_key_str
         
-        logger.debug(f"DEBUG: All action values: {action_values_debug}")
+        logger.debug(f"DEBUG: All action values (before potential overrides): {action_values_debug}") # MODIFIED THIS LINE
+
+        # Apply state-aware risk weighting - prioritize certain factors based on context
+        if self.current_state: # Ensure current_state is not None
+            parsed_current_state_for_weighting = self._parse_state_key(self.current_state) 
+            current_co2_level_for_weighting = parsed_current_state_for_weighting.get("co2_level")
+            current_occupancy_for_weighting = parsed_current_state_for_weighting.get("occupancy")
+
+            if current_occupancy_for_weighting == Occupancy.OCCUPIED.value:
+                
+                # When room is occupied, AND CO2 IS NOT ALREADY LOW, air quality (CO2) is weighted more heavily
+                if current_co2_level_for_weighting == CO2Level.HIGH.value:
+                    co2_importance_multiplier = 5.0
+                    logger.debug(f"Applying CO2 importance weighting because current CO2 is {current_co2_level_for_weighting} and occupied.")
+                    for action_key_str_weighting in action_values_debug:
+                        expected_co2_improvement = 0
+                        if action_key_str_weighting != Action.TURN_OFF.value:
+                            if action_key_str_weighting == Action.TURN_ON_LOW.value: expected_co2_improvement = 1.0
+                            elif action_key_str_weighting == Action.TURN_ON_MEDIUM.value: expected_co2_improvement = 2.0
+                            elif action_key_str_weighting == Action.TURN_ON_MAX.value: expected_co2_improvement = 3.0
+                            action_values_debug[action_key_str_weighting] += expected_co2_improvement * co2_importance_multiplier
+                    logger.debug(f"Action values after CO2 importance weighting: {action_values_debug}")
+                
+                # Direct override for high CO2 in occupied rooms - ensure ventilation is prioritized
+                if current_co2_level_for_weighting == CO2Level.HIGH.value: 
+                    
+                    logger.info(f"Applying critical air quality override for occupied room with high CO2. Values before override: {action_values_debug}")
+                    if Action.TURN_OFF.value in action_values_debug:
+                        action_values_debug[Action.TURN_OFF.value] -= 1000 
+                    if Action.TURN_ON_MEDIUM.value in action_values_debug:
+                        action_values_debug[Action.TURN_ON_MEDIUM.value] += 50 
+                    if Action.TURN_ON_MAX.value in action_values_debug:
+                        action_values_debug[Action.TURN_ON_MAX.value] += 40
+                    logger.debug(f"Values after critical override: {action_values_debug}")
+                
+                # After weighting, re-evaluate best_action and best_value based on modified action_values_debug
+                if action_values_debug: # Check if dictionary is not empty
+                    best_action = max(action_values_debug, key=action_values_debug.get)
+                    best_value = action_values_debug[best_action]
+                else: 
+                    best_action = None 
+                    best_value = float('-inf')
+        
+        logger.debug(f"DEBUG: Final action values (after all overrides): {action_values_debug}")
         
         if best_action is None: # Fallback if no action was chosen
-            if self.transition_model.get(self.current_state):
+            if self.transition_model.get(self.current_state) and self.transition_model[self.current_state]:
                  best_action = random.choice(list(self.transition_model[self.current_state].keys()))
-                 logger.warning(f"No best_action derived from values, choosing random available: {best_action}")
+                 logger.warning(f"No best_action derived from values/override, choosing random available: {best_action}")
             else:
                  best_action = Action.TURN_OFF.value # Ultimate fallback
-                 logger.warning(f"No actions available for state {self.current_state}, defaulting to OFF.")
+                 logger.warning(f"No actions available for state {self.current_state} or values led to no action, defaulting to OFF.")
 
 
         self.exploration_rate *= self.random_action_decay
         
+        self.last_best_value = best_value # ADDED THIS LINE
         logger.info(f"Selected action: {best_action} for state: {self.current_state} (best_value: {best_value:.2f})")
         # Log active thresholds for context
         log_active_co2_thr, log_active_temp_thr = self._get_current_target_thresholds(current_occupants) # Re-fetch for logging consistency
@@ -786,7 +852,7 @@ class MarkovController:
         
         return success
     
-    def _update_model(self, previous_state, action, current_state):
+    def _update_model(self, previous_state, action, current_state, reward=None):
         """
         Update the transition model based on observed state transition.
         
@@ -794,6 +860,7 @@ class MarkovController:
             previous_state: Previous state key
             action: Action taken
             current_state: Resulting state key
+            reward: Optional reward value for this transition (not used currently)
         """
         try:
             # Check if states and action exist in model

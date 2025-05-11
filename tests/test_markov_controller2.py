@@ -304,18 +304,19 @@ def test_decide_action():
         logger.info(f"✅ Low CO2, optimal temp: {action}")
         
         # Test scenario 3: Medium CO2, cold room
-        data_manager.update_data(co2=950, temperature=19.0, occupants=2)
+        logger.info("--- TESTING SCENARIO 3: Medium CO2, cold room ---")
+        data_manager.update_data(co2=950, temperature=19.0, occupants=2) # Temperature 19.0 -> LOW category
         controller.current_state = controller._create_state_key(
             CO2Level.MEDIUM.value, 
             TemperatureLevel.LOW.value, 
             Occupancy.OCCUPIED.value, 
-            TimeOfDay.DAY.value
+            TimeOfDay.DAY.value 
         )
-        
         action = controller._decide_action()
-        
-        # Medium CO2 but cold room - may prefer to minimize ventilation
-        logger.info(f"✅ Medium CO2, cold room: {action}")
+        controller_best_value_for_action_max_if_available = controller.last_best_value
+        logger.info(f"Scenario 3 Result: Current state={controller.current_state}, Decided action={action}, Best value={controller_best_value_for_action_max_if_available}")
+        # Add your assertion here, for example:
+        # assert action == "off", f"Expected 'off' for cold room with medium CO2, got {action}"
         
         # Test scenario 4: Empty room, high CO2
         data_manager.update_data(co2=1300, temperature=22.0, occupants=0)

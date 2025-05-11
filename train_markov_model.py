@@ -96,6 +96,66 @@ class MockOccupancyAnalyzer:
     def get_expected_empty_duration(self, current_datetime):
         return None
 
+# --- Add Reward Calculation Function ---
+def _calculate_reward(state_key, action, co2_level, temp_level, occupants):
+    """
+    Calculate reward for a state-action-next_state transition.
+    
+    This helps train the model with appropriate rewards for different scenarios.
+    
+    Args:
+        state_key: Current state key string
+        action: Action being taken
+        co2_level: CO2 level in next state
+        temp_level: Temperature level in next state
+        occupants: Number of occupants in the room
+    
+    Returns:
+        float: Calculated reward
+    """
+    # Parse the state components
+    components = state_key.split('_')
+    if len(components) < 4:
+        return 0.0  # Invalid state
+    
+    next_co2_level, next_temp_level, occupancy, time_of_day = components
+    
+    # Base rewards for different components
+    co2_rewards = {
+        "low": 2.0,    # Good air quality is rewarded
+        "medium": 0.5, # Acceptable air quality gets small reward
+        "high": -6.0   # High CO2 is heavily penalized when occupied
+    }
+    
+    temp_rewards = {
+        "low": -0.5,    # Too cold is slightly penalized
+        "medium": 1.0,  # Comfortable temperature is rewarded
+        "high": -0.5    # Too hot is slightly penalized
+    }
+    
+    # Energy costs
+    energy_costs = {
+        "off": 0,
+        "low": -0.1,
+        "medium": -0.3,
+        "max": -0.5
+    }
+    
+    # Calculate reward components
+    co2_reward = co2_rewards.get(next_co2_level, 0)
+    
+    # Increase penalty for high CO2 when room is occupied
+    if next_co2_level == "high" and occupancy == "occupied":
+        co2_reward = -12.0  # Much stronger penalty
+    
+    temp_reward = temp_rewards.get(next_temp_level, 0)
+    energy_cost = energy_costs.get(action, 0)
+    
+    # Calculate final reward
+    total_reward = co2_reward + temp_reward + energy_cost
+    
+    return total_reward
+
 # --- Training Function ---
 def train_model():
     """Trains the MarkovController's transition model using simulated data."""
@@ -182,29 +242,46 @@ def train_model():
                 current_state_key = markov_controller._evaluate_state() # Evaluates with current_csv_row data & updates thresholds
 
                 # 4. Calculate reward for the transition
-                calculated_reward = 0 # Default reward
                 try:
-                    # Reward is based on the state achieved (current_csv_row) after taking action_taken_enum
+                    # Extract data for reward calculation
                     current_co2_val = float(current_csv_row['co2'])
                     current_temp_val = float(current_csv_row['temperature'])
                     current_occupants_val = int(current_csv_row['occupants'])
                     
-                    # _calculate_reward uses the controller's current thresholds,
-                    # which were updated by _evaluate_state() using current_csv_row data.
-                    calculated_reward = markov_controller._calculate_reward(
-                        current_co2_val,
-                        current_temp_val,
-                        current_occupants_val,
-                        action_taken_enum.value # The action that was taken
+                    # Determine state components for reward calculation
+                    if current_co2_val < markov_controller.co2_thresholds["low_max"]:
+                        co2_level = "low"
+                    elif current_co2_val < markov_controller.co2_thresholds["medium_max"]:
+                        co2_level = "medium"
+                    else:
+                        co2_level = "high"
+                        
+                    if current_temp_val < markov_controller.temp_thresholds["low_max"]:
+                        temp_level = "low"
+                    elif current_temp_val < markov_controller.temp_thresholds["medium_max"]:
+                        temp_level = "medium"
+                    else:
+                        temp_level = "high"
+                    
+                    # Calculate reward using our custom function
+                    calculated_reward = _calculate_reward(
+                        current_state_key,
+                        action_taken_str,
+                        co2_level,
+                        temp_level,
+                        current_occupants_val
                     )
+                        
                 except KeyError as e:
                     logger.warning(f"Missing data for reward calculation in row {current_csv_row}: {e}")
+                    calculated_reward = 0.0
                 except ValueError as e:
                     logger.warning(f"Invalid data type for reward calculation in row {current_csv_row}: {e}")
-
+                    calculated_reward = 0.0
 
                 if previous_state_key and current_state_key:
                     logger.debug(f"Transition: {previous_state_key} --({action_taken_enum.value})--> {current_state_key} (Reward: {calculated_reward:.2f})")
+                    # Update the model with the transition and reward
                     markov_controller._update_model(previous_state_key, action_taken_enum.value, current_state_key, reward=calculated_reward)
                     rows_processed += 1
                 else:

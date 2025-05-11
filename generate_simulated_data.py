@@ -1,192 +1,217 @@
 #!/usr/bin/env python3
-# generate_simulated_data.py
 """
-Generate simulated historical data for ventilation system.
-
-This script creates a CSV file with simulated measurements of indoor conditions
-and ventilation system actions over time. The data includes timestamp, CO2 levels,
-temperature, humidity, occupancy, and ventilation speed.
-
-The simulation includes:
-- Daily and weekly patterns of human activity
-- Seasonal variations in temperature and humidity
-- Realistic CO2 dynamics based on occupancy and ventilation
-- Simple ventilation control logic based on environmental conditions
-
-Usage:
-    python generate_simulated_data.py
-
-Output:
-    Creates a file named 'simulated_ventilation_history.csv' in the current directory.
-
-Configuration:
-    Adjust the simulation parameters at the top of this file to customize the simulation.
+Improved ventilation system data simulator with realistic occupancy patterns.
 """
 import csv
 import random
 import math
+import logging
 from datetime import datetime, timedelta
 
-# Simulation parameters
-SIMULATION_DAYS = 365
-TIME_STEP_MINUTES = 10
-MAX_OCCUPANTS = 3
-CO2_GENERATION_PER_PERSON_PER_HOUR = 300  # ppm per person per hour
-CO2_NATURAL_DECAY_RATE_PER_HOUR = 75  # ppm per hour due to natural infiltration
-VENTILATION_EFFECTIVENESS = {
-    "low": 200,      # ppm reduction per hour
-    "medium": 600, 
-    "max": 1056
-}
-INITIAL_CO2 = 450  # ppm
-INITIAL_TEMP = 21.5  # °C
-BASE_OUTDOOR_TEMP_DAY = 22.0  # °C - will be adjusted for seasonal variation
-BASE_OUTDOOR_TEMP_NIGHT = 15.0  # °C - will be adjusted for seasonal variation
-TEMP_CHANGE_RATE_VENT_ON = 0.3  # °C per hour
-TEMP_CHANGE_RATE_VENT_OFF = 0.1  # °C per hour
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+)
+logger = logging.getLogger("data_generator")
+
+# === SIMULATION PARAMETERS ===
+SIMULATION_DAYS = 7
+TIME_STEP_MINUTES = 2
+MAX_OCCUPANTS = 2
 OUTPUT_FILE = "simulated_ventilation_history.csv"
 
-# Ventilation threshold parameters
-CO2_THRESHOLD_HIGH = 1200  # ppm
-CO2_THRESHOLD_MEDIUM = 900  # ppm 
-CO2_THRESHOLD_LOW = 700  # ppm
-TEMP_THRESHOLD_HIGH = 25.0  # °C
-NIGHT_MODE_START_HOUR = 23
-NIGHT_MODE_END_HOUR = 7
+# CO2 dynamics - adjusted for less frequent ventilation
+CO2_GENERATION_PER_PERSON_PER_HOUR = 250    # ppm per person per hour (slightly reduced)
+CO2_NATURAL_DECAY_RATE_PER_HOUR = 300       # ppm per hour natural decrease
+CO2_BASELINE = 420                          # outdoor baseline CO2 level
 
-def get_seasonal_temperature_adjustment(day_of_year, base_temp):
-    """
-    Adjust temperature based on season.
-    
-    Args:
-        day_of_year: Day of year (0-365)
-        base_temp: Base temperature to adjust
-        
-    Returns:
-        float: Adjusted temperature
-    """
-    # Simple sine wave seasonal variation with peak in summer (day ~180)
-    seasonal_variation = 6.0 * math.sin((day_of_year / 365.0) * 2 * math.pi - math.pi/2)
-    return base_temp + seasonal_variation
+# Ventilation effectiveness (CO2 reduction rates)
+VENTILATION_EFFECTIVENESS = {
+    "low": 200,      # ppm reduction per hour
+    "medium": 890,   # ppm reduction per hour
+    "max": 1236      # ppm reduction per hour
+}
 
-def get_occupancy(current_datetime, max_occupants):
-    """
-    Determine occupancy based on time of day and day of week.
-    
-    Args:
-        current_datetime: Current datetime in simulation
-        max_occupants: Maximum number of occupants
-        
-    Returns:
-        int: Number of occupants
-    """
-    hour = current_datetime.hour
-    day_of_week = current_datetime.weekday()  # 0=Monday, 6=Sunday
-    is_weekend = day_of_week >= 5
-    
-    # Check for vacation periods or holidays (simplified)
-    day_of_year = current_datetime.timetuple().tm_yday
-    is_holiday_season = (350 <= day_of_year <= 365) or (1 <= day_of_year <= 7)  # Winter holidays
-    is_summer_vacation = 180 <= day_of_year <= 220  # Summer vacation
-    
-    # Probability modifiers
-    vacation_modifier = 0.7 if is_holiday_season or is_summer_vacation else 1.0
-    
-    # Base probabilities of being occupied
-    if is_weekend:
-        # Weekend pattern
-        if 0 <= hour < 7:  # Night
-            base_occupancy = random.choices([0, 1], weights=[0.8, 0.2])[0]
-        elif 7 <= hour < 10:  # Morning
-            base_occupancy = random.choices([0, 1, 2], weights=[0.1, 0.6, 0.3])[0]
-        elif 10 <= hour < 20:  # Day
-            base_occupancy = random.choices(
-                list(range(max_occupants + 1)), 
-                weights=[0.1] + [0.9/max_occupants] * max_occupants
-            )[0]
-        elif 20 <= hour < 23:  # Evening
-            base_occupancy = random.choices([0, 1, 2], weights=[0.2, 0.5, 0.3])[0]
-        else:  # Late night
-            base_occupancy = random.choices([0, 1], weights=[0.7, 0.3])[0]
-    else:
-        # Weekday pattern
-        if 0 <= hour < 7:  # Night
-            base_occupancy = random.choices([0, 1], weights=[0.8, 0.2])[0]
-        elif 7 <= hour < 9:  # Morning preparation
-            base_occupancy = random.choices([0, 1, 2], weights=[0.2, 0.6, 0.2])[0]
-        elif 9 <= hour < 17:  # Work hours
-            base_occupancy = random.choices([0, 1], weights=[0.9, 0.1])[0]  # Mostly empty, sometimes someone stays
-        elif 17 <= hour < 20:  # Evening return
-            base_occupancy = random.choices([0, 1, 2, 3], weights=[0.1, 0.3, 0.4, 0.2])[0]
-        elif 20 <= hour < 23:  # Evening
-            base_occupancy = random.choices([0, 1, 2], weights=[0.2, 0.5, 0.3])[0]
-        else:  # Late night
-            base_occupancy = random.choices([0, 1], weights=[0.7, 0.3])[0]
-    
-    # Apply vacation/holiday modifier
-    if random.random() > vacation_modifier:
-        base_occupancy = 0  # Away during vacation periods
-    
-    # Add some randomness - occasionally have unexpected occupancy
-    if random.random() < 0.03:  # 3% chance of deviation
-        base_occupancy = random.randint(0, max_occupants)
-    
-    return min(base_occupancy, max_occupants)
+# Temperature dynamics
+INITIAL_TEMP = 21.5  # starting indoor temperature
+VENTILATION_TEMP_IMPACT = {
+    "low": 0.2,      # °C decrease per hour
+    "medium": 0.8,   # °C decrease per hour
+    "max": 1.2       # °C decrease per hour
+}
+TEMP_RISE_RATE = 0.1  # °C per hour ambient rise (heating)
+TEMP_RISE_PER_PERSON = 0.05  # Additional °C per hour per person
 
-def determine_ventilation_action(current_co2, current_temp, current_occupants, current_datetime):
-    """
-    Determine ventilation action based on CO2, temperature, and occupancy.
+# Ventilation thresholds
+CO2_THRESHOLD_HIGH = 1200     # ppm - high threshold
+CO2_THRESHOLD_MEDIUM = 950    # ppm - medium threshold
+CO2_THRESHOLD_LOW = 800       # ppm - low threshold
+TEMP_THRESHOLD_HIGH = 25.0    # °C - high temperature
+
+# Occupancy management
+MIN_OCCUPANCY_DURATION = 180  # minutes (3 hours)
+
+# === OCCUPANCY TRACKING ===
+class OccupancyManager:
+    """Manages realistic occupancy patterns with minimum stay duration."""
     
-    Args:
-        current_co2: Current CO2 level in ppm
-        current_temp: Current temperature in °C
-        current_occupants: Current number of occupants
-        current_datetime: Current datetime
+    def __init__(self, max_occupants, min_duration_minutes):
+        self.max_occupants = max_occupants
+        self.min_duration_minutes = min_duration_minutes
+        self.current_occupants = 0
+        self.occupancy_changes = {}  # Key: person_id, Value: next allowed change time
+        self.last_update_time = None
+
+    def update(self, current_datetime):
+        """Update occupancy levels based on time and previous state."""
+        # Initialize on first call
+        if self.last_update_time is None:
+            # Start with everyone home for overnight period
+            self.current_occupants = self.max_occupants
+            for i in range(self.max_occupants):
+                self.occupancy_changes[i] = current_datetime
+            self.last_update_time = current_datetime
+            return self.current_occupants
+            
+        # Check if we've passed any change time thresholds
+        hour = current_datetime.hour
+        day_of_week = current_datetime.weekday()  # 0=Monday, 6=Sunday
+        is_weekend = day_of_week >= 5
         
-    Returns:
-        str: Ventilation action ("off", "low", "medium", "max")
-    """
-    # Check if it's night mode
-    hour = current_datetime.hour
-    night_mode = (hour >= NIGHT_MODE_START_HOUR or hour < NIGHT_MODE_END_HOUR)
-    
-    # Emergency ventilation - high CO2 regardless of other factors
-    if current_co2 > 1400:
-        return "max"
-    
-    # During night mode, ventilation usually off unless CO2 is high
-    if night_mode:
-        if current_co2 > CO2_THRESHOLD_HIGH:
-            return "medium"
-        elif current_co2 > CO2_THRESHOLD_MEDIUM:
-            return "low"
-        else:
-            return "off"
-    
-    # If no occupants, only ventilate if necessary
+        # Deep night: everyone is home (2 AM to 7 AM)
+        if 2 <= hour < 7:
+            # Everyone who's not already home should return
+            for i in range(self.max_occupants):
+                if i >= self.current_occupants:  # This person is "away"
+                    if current_datetime >= self.occupancy_changes.get(i, current_datetime):
+                        self.current_occupants += 1
+                        self.occupancy_changes[i] = current_datetime + timedelta(minutes=self.min_duration_minutes)
+            return self.current_occupants
+            
+        # Weekday work hours: typically empty (7 AM to 5 PM)
+        if not is_weekend and 7 <= hour < 17:
+            # Only allow people to leave during this period if they've met minimum stay
+            if self.current_occupants > 0:
+                for i in range(self.current_occupants-1, -1, -1):  # Check current occupants from highest to lowest
+                    # Check if this person is allowed to leave
+                    if current_datetime >= self.occupancy_changes.get(i, current_datetime):
+                        # 75% chance of leaving during work hours if allowed
+                        if random.random() < 0.75:
+                            self.current_occupants -= 1
+                            # Mark this person as away for at least the minimum duration
+                            next_allowed = current_datetime + timedelta(minutes=self.min_duration_minutes)
+                            # During work hours, extend to at least 5 PM
+                            if next_allowed.hour < 17:
+                                next_allowed = next_allowed.replace(hour=17, minute=0)
+                            self.occupancy_changes[i] = next_allowed
+            return self.current_occupants
+            
+        # Evening time (5 PM to 2 AM) - people return and may leave again
+        if 17 <= hour < 24 or 0 <= hour < 2:
+            # People away may return
+            for i in range(self.max_occupants):
+                # If this "slot" is available (person is away)
+                if i >= self.current_occupants:
+                    # Check if they're allowed to return yet
+                    if current_datetime >= self.occupancy_changes.get(i, current_datetime):
+                        # Higher probability of return in evening
+                        p_return = 0.4 if 17 <= hour < 21 else 0.2
+                        if random.random() < p_return:
+                            self.current_occupants += 1
+                            self.occupancy_changes[i] = current_datetime + timedelta(minutes=self.min_duration_minutes)
+            
+            # People home may leave (less likely)
+            if self.current_occupants > 0:
+                for i in range(self.current_occupants-1, -1, -1):
+                    if current_datetime >= self.occupancy_changes.get(i, current_datetime):
+                        # Lower probability of leaving in evening 
+                        p_leave = 0.1
+                        if random.random() < p_leave:
+                            self.current_occupants -= 1
+                            self.occupancy_changes[i] = current_datetime + timedelta(minutes=self.min_duration_minutes)
+            return self.current_occupants
+        
+        # Weekend patterns
+        if is_weekend:
+            # On weekends, 50% chance someone leaves if they've been home long enough
+            if self.current_occupants > 0:
+                for i in range(self.current_occupants-1, -1, -1):
+                    if current_datetime >= self.occupancy_changes.get(i, current_datetime):
+                        # Only 10% chance per update that someone leaves
+                        if random.random() < 0.1:  
+                            self.current_occupants -= 1
+                            self.occupancy_changes[i] = current_datetime + timedelta(minutes=self.min_duration_minutes)
+            
+            # People away may return
+            for i in range(self.max_occupants):
+                if i >= self.current_occupants:  # This person is away
+                    if current_datetime >= self.occupancy_changes.get(i, current_datetime):
+                        # Higher return probability on weekends
+                        if random.random() < 0.3:
+                            self.current_occupants += 1
+                            self.occupancy_changes[i] = current_datetime + timedelta(minutes=self.min_duration_minutes)
+            return self.current_occupants
+            
+        # Default: maintain current occupancy but respect duration constraints
+        self.last_update_time = current_datetime
+        return self.current_occupants
+
+
+def determine_ventilation_action(current_co2, current_temp, current_occupants, night_mode=False, current_action="off"):
+    """Determine appropriate ventilation action based on conditions."""
+    # If no one is home, don't run ventilation
     if current_occupants == 0:
-        if current_co2 > CO2_THRESHOLD_HIGH or current_temp > TEMP_THRESHOLD_HIGH + 1:
-            return "medium"
-        elif current_co2 > CO2_THRESHOLD_MEDIUM or current_temp > TEMP_THRESHOLD_HIGH:
-            return "low"
-        else:
-            return "off"
+        return "off"
+        
+    # Emergency ventilation for very high CO2
+    if current_co2 > 1500:
+        return "max"
+        
+    # Night mode is more conservative - virtually never ventilate at night
+    if night_mode:
+        if current_co2 > CO2_THRESHOLD_HIGH + 200:  # Much higher tolerance at night
+            return "low"  # Just low at night unless emergency
+        return "off"
     
-    # With occupants, determine action based on CO2 and temperature
+    # Normal occupied mode - but be more aggressive about turning off
     if current_co2 > CO2_THRESHOLD_HIGH:
         return "max"
     elif current_co2 > CO2_THRESHOLD_MEDIUM:
+        # Only use medium if CO2 is actually high, or if we're already ventilating
         return "medium"
-    elif current_co2 > CO2_THRESHOLD_LOW or current_temp > TEMP_THRESHOLD_HIGH:
+    elif current_co2 > CO2_THRESHOLD_LOW:
+        # For LOW mode, add some randomness to prevent constant low operation
+        if current_action == "off":
+            # Only 50% chance to turn on low if we're currently off
+            if random.random() < 0.5:
+                return "low"
+            return "off"
+        return "low"  # Keep low if already running
+    
+    # CO2 is fine, check temperature
+    if current_temp > TEMP_THRESHOLD_HIGH + 1.5:  # Higher threshold
+        return "medium"  # Ventilate to cool if too warm
+    elif current_temp > TEMP_THRESHOLD_HIGH + 0.5:  # Higher threshold
+        # 50% chance for low if we're currently off
+        if current_action == "off" and random.random() < 0.5:
+            return "off"
         return "low"
-    else:
-        # Sometimes ventilate at low speed even if not strictly necessary
-        if random.random() < 0.1:  # 10% chance
-            return "low"
-        return "off"
+        
+    # If already ventilating but CO2 is now good, be more aggressive about stopping
+    if current_action != "off" and current_co2 < CO2_THRESHOLD_LOW:
+        if random.random() < 0.9:  # 90% chance to turn off (was 70%)
+            return "off"
+        return current_action
+        
+    # Default to off - all parameters are good
+    return "off"
+
 
 def main():
-    """Run the ventilation data simulation."""
+    """Run the ventilation data simulation with realistic patterns."""
+    logger.info(f"Starting improved simulation for {SIMULATION_DAYS} days...")
+    
     # Initialize CSV file
     with open(OUTPUT_FILE, 'w', newline='') as f:
         writer = csv.writer(f)
@@ -195,111 +220,91 @@ def main():
     # Initialize simulation state
     start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=SIMULATION_DAYS)
     current_datetime = start_date
-    current_co2 = INITIAL_CO2
-    current_temp = INITIAL_TEMP
-    
-    # Main simulation loop
     end_datetime = start_date + timedelta(days=SIMULATION_DAYS)
     
-    print(f"Starting simulation from {start_date.isoformat()} to {end_datetime.isoformat()}")
+    # Initial environmental conditions
+    current_co2 = 700.0  # Starting CO2 level
+    current_temp = INITIAL_TEMP
+    current_humidity = 45.0
+    current_vent_action = "off"
     
+    # Initialize occupancy manager
+    occupancy_manager = OccupancyManager(MAX_OCCUPANTS, MIN_OCCUPANCY_DURATION)
+    
+    # Simulation loop
     while current_datetime < end_datetime:
-        # Get day of year for seasonal adjustments
-        day_of_year = current_datetime.timetuple().tm_yday
-        
-        # Determine occupancy
-        current_occupants = get_occupancy(current_datetime, MAX_OCCUPANTS)
-        
-        # Determine ventilation action
-        ventilation_action = determine_ventilation_action(
-            current_co2, current_temp, current_occupants, current_datetime
-        )
-        
-        # Calculate CO2 change
-        time_factor = TIME_STEP_MINUTES / 60  # Convert minutes to hours
-        
-        # CO2 generated by occupants
-        delta_co2_generation = CO2_GENERATION_PER_PERSON_PER_HOUR * time_factor * current_occupants
-        
-        # Natural CO2 decay (proportional to difference from baseline)
-        delta_co2_decay = CO2_NATURAL_DECAY_RATE_PER_HOUR * time_factor * (current_co2 - 400) / 1000
-        
-        # CO2 reduction from ventilation (proportional to difference from baseline)
-        delta_co2_ventilation = 0
-        if ventilation_action != "off":
-            delta_co2_ventilation = VENTILATION_EFFECTIVENESS[ventilation_action] * time_factor * (current_co2 - 400) / 1000
-        
-        # Update CO2
-        current_co2 += delta_co2_generation - delta_co2_decay - delta_co2_ventilation
-        
-        # CO2 has a floor based on outdoor levels
-        current_co2 = max(400, min(5000, current_co2))
-        
-        # Calculate temperature change
-        # Determine target outdoor temperature based on time of day and season
+        # Determine time-dependent parameters
         hour = current_datetime.hour
-        is_daytime = 7 <= hour < 19
+        night_mode = (hour >= 23 or hour < 7)  # Night mode hours
         
-        base_outdoor_temp = BASE_OUTDOOR_TEMP_DAY if is_daytime else BASE_OUTDOOR_TEMP_NIGHT
-        outdoor_temp = get_seasonal_temperature_adjustment(day_of_year, base_outdoor_temp)
+        # Update occupancy based on time
+        occupants = occupancy_manager.update(current_datetime)
         
-        # Temperature change based on ventilation state
-        if ventilation_action == "off":
-            # When ventilation is off, temperature changes slowly
-            temp_change_rate = TEMP_CHANGE_RATE_VENT_OFF
-        else:
-            # When ventilation is on, temperature changes faster toward outdoor temperature
-            temp_change_rate = TEMP_CHANGE_RATE_VENT_ON
-            
-            # More aggressive ventilation speeds cause faster temperature change
-            if ventilation_action == "medium":
-                temp_change_rate *= 1.5
-            elif ventilation_action == "max":
-                temp_change_rate *= 2.0
+        # Calculate CO2 dynamics for this time step
+        time_step_hours = TIME_STEP_MINUTES / 60.0
         
-        # Calculate temperature change
-        temp_change = (outdoor_temp - current_temp) * temp_change_rate * time_factor
+        # 1. CO2 generation from occupants
+        co2_generation = CO2_GENERATION_PER_PERSON_PER_HOUR * occupants * time_step_hours
         
-        # Add heat from occupants (each person adds about 0.1°C per hour)
-        temp_change += current_occupants * 0.1 * time_factor
+        # 2. CO2 reduction from ventilation (if active)
+        co2_ventilation_reduction = 0
+        if current_vent_action != "off":
+            co2_ventilation_reduction = VENTILATION_EFFECTIVENESS[current_vent_action] * time_step_hours
         
-        # Small random variation
-        temp_change += random.uniform(-0.05, 0.05) * time_factor
-        
-        # Update temperature
-        current_temp += temp_change
-        
-        # Generate humidity (somewhat realistic but simplified)
-        # Humidity tends to be higher at night and lower during the day
-        base_humidity = 50  # Base humidity level
-        time_variation = 5 if is_daytime else 10  # Day/night variation
-        occupant_variation = current_occupants * 2  # Each person adds humidity
-        ventilation_effect = -5 if ventilation_action != "off" else 0  # Ventilation reduces humidity
-        
-        # Seasonal variation - higher in summer, lower in winter
-        seasonal_variation = 10 * math.sin((day_of_year / 365.0) * 2 * math.pi - math.pi/2)
-        
-        # Random variation
-        humidity_noise = random.uniform(-5, 5)
-        
-        current_humidity = (
-            base_humidity + 
-            occupant_variation + 
-            ventilation_effect - 
-            time_variation + 
-            seasonal_variation * 0.3 +  # Reduce the impact of seasonal variation
-            humidity_noise
+        # 3. Natural CO2 decay toward baseline
+        co2_natural_decay = min(
+            CO2_NATURAL_DECAY_RATE_PER_HOUR * time_step_hours,  # Max possible decay
+            max(0, current_co2 - CO2_BASELINE) * 0.3 * time_step_hours  # Proportional to difference from baseline
         )
         
-        # Keep humidity within reasonable bounds
-        current_humidity = max(30, min(70, current_humidity))
+        # Calculate new CO2 level
+        current_co2 = max(
+            CO2_BASELINE,  # Can't go below baseline
+            current_co2 + co2_generation - co2_ventilation_reduction - co2_natural_decay
+        )
+        
+        # Calculate temperature dynamics
+        # 1. Natural temperature rise (from heating/environment)
+        temp_natural_rise = TEMP_RISE_RATE * time_step_hours
+        
+        # 2. Additional heat from occupants
+        temp_occupant_rise = TEMP_RISE_PER_PERSON * occupants * time_step_hours
+        
+        # 3. Temperature decrease from ventilation (if active)
+        temp_ventilation_decrease = 0
+        if current_vent_action != "off":
+            temp_ventilation_decrease = VENTILATION_TEMP_IMPACT[current_vent_action] * time_step_hours
+        
+        # Calculate new temperature
+        current_temp = max(
+            18.0,  # Minimum temperature
+            min(
+                27.0,  # Maximum temperature
+                current_temp + temp_natural_rise + temp_occupant_rise - temp_ventilation_decrease
+            )
+        )
+        
+        # Calculate humidity (simplified model)
+        # Base humidity changes
+        if current_vent_action != "off":
+            # Ventilation tends to lower humidity
+            humidity_change = -2 * time_step_hours
+        else:
+            # With people, humidity rises, otherwise stays similar
+            humidity_change = (0.5 * occupants) * time_step_hours
+        
+        # Add some randomness
+        humidity_change += random.uniform(-0.5, 0.5) * time_step_hours
+        
+        # Apply humidity change
+        current_humidity = max(30, min(70, current_humidity + humidity_change))
         
         # Round values for output
         output_co2 = round(current_co2)
         output_temp = round(current_temp, 1)
         output_humidity = round(current_humidity, 1)
         
-        # Write to CSV
+        # Write current state to CSV
         with open(OUTPUT_FILE, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
@@ -307,18 +312,28 @@ def main():
                 output_co2,
                 output_temp,
                 output_humidity,
-                current_occupants,
-                ventilation_action
+                occupants,
+                current_vent_action
             ])
+        
+        # Determine ventilation action for the next time step
+        next_vent_action = determine_ventilation_action(
+            current_co2, current_temp, occupants, 
+            night_mode=night_mode,
+            current_action=current_vent_action
+        )
+        
+        # Update ventilation action for next iteration
+        current_vent_action = next_vent_action
+        
+        # Progress logging
+        if current_datetime.hour == 0 and current_datetime.minute == 0:
+            logger.info(f"Simulating: {current_datetime.date()} | Occupants: {occupants} | CO2: {output_co2} ppm | Temp: {output_temp}°C")
         
         # Advance time
         current_datetime += timedelta(minutes=TIME_STEP_MINUTES)
-        
-        # Progress indication (every 7 days)
-        days_completed = (current_datetime - start_date).days
-        if days_completed % 7 == 0 and current_datetime.hour == 0 and current_datetime.minute == 0:
-            print(f"Simulation progress: {days_completed}/{SIMULATION_DAYS} days completed")
+    
+    logger.info(f"Simulation complete. Data saved to {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()
-    print(f"Simulation complete. Data saved to {OUTPUT_FILE}")
