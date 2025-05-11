@@ -34,9 +34,11 @@ async def sleep_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     weekday_patterns = summary.get("weekday_patterns", {})
     if weekday_patterns:
         for day, pattern in weekday_patterns.items():
-            confidence = float(pattern.get("confidence", "0"))
-            confidence_emoji = "🟢" if confidence > 0.7 else "🟡" if confidence > 0.5 else "🔴"
-            patterns_text += f"{confidence_emoji} *{day}*: Sleep {pattern.get('sleep')} - Wake {pattern.get('wake')} (Conf: {pattern.get('confidence')})\n"
+            sleep_confidence = pattern.get("sleep_confidence", 0.0)
+            wake_confidence = pattern.get("wake_confidence", 0.0)
+            confidence_emoji = "🟢" if sleep_confidence > 0.7 and wake_confidence > 0.7 else "🟡" if sleep_confidence > 0.5 and wake_confidence > 0.5 else "🔴"
+            
+            patterns_text += f"{confidence_emoji} *{day}*: Sleep {pattern.get('sleep')} (Conf: {sleep_confidence:.0%}) - Wake {pattern.get('wake')} (Conf: {wake_confidence:.0%})\n"
     else:
         patterns_text += "No sleep patterns detected yet.\n"
     
@@ -99,9 +101,11 @@ async def handle_sleep_callback(update: Update, context: ContextTypes.DEFAULT_TY
             weekday_patterns = summary.get("weekday_patterns", {})
             if weekday_patterns:
                 for day, pattern in weekday_patterns.items():
-                    confidence = float(pattern.get("confidence", "0"))
-                    confidence_emoji = "🟢" if confidence > 0.7 else "🟡" if confidence > 0.5 else "🔴"
-                    patterns_text += f"{confidence_emoji} *{day}*: Sleep {pattern.get('sleep')} - Wake {pattern.get('wake')} (Conf: {pattern.get('confidence')})\n"
+                    sleep_confidence = pattern.get("sleep_confidence", 0.0)
+                    wake_confidence = pattern.get("wake_confidence", 0.0)
+                    confidence_emoji = "🟢" if sleep_confidence > 0.7 and wake_confidence > 0.7 else "🟡" if sleep_confidence > 0.5 and wake_confidence > 0.5 else "🔴"
+                    
+                    patterns_text += f"{confidence_emoji} *{day}*: Sleep {pattern.get('sleep')} (Conf: {sleep_confidence:.0%}) - Wake {pattern.get('wake')} (Conf: {wake_confidence:.0%})\n"
             else:
                 patterns_text += "No sleep patterns detected yet.\n"
             

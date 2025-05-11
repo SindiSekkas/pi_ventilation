@@ -10,6 +10,7 @@ import threading
 import time as time_module
 from datetime import datetime, timedelta
 from collections import defaultdict
+from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,211 @@ class AdaptiveSleepAnalyzer:
         except Exception as e:
             logger.error(f"Error updating CO2 data: {e}")
             return False
-    
+
+    def get_predicted_sleep_time_for_day(self, day_of_week: int) -> Tuple[Optional[datetime], float]:
+        """
+        Get predicted sleep time with confidence for a specific day of week.
+        
+        Args:
+            day_of_week: Day of week (0=Monday, 6=Sunday)
+            
+        Returns:
+            Tuple[Optional[datetime], float]: (predicted_sleep_time, confidence)
+        """
+        weekday_key = str(day_of_week)
+        pattern = self.sleep_patterns["weekday_patterns"].get(weekday_key, {})
+        
+        if not pattern.get("sleep"):
+            return None, 0.0
+        
+        # Calculate confidence based on multiple factors
+        detections = pattern.get("detections", 0)
+        base_confidence = pattern.get("confidence", 0)
+        
+        # Factor 1: Number of historical observations
+        detection_factor = min(1.0, detections / 10.0)  # Full confidence at 10+ detections
+        
+        # Factor 2: Recent events impact
+        recent_events = self._get_recent_events_for_weekday(day_of_week, "sleep_start")
+        recent_factor = self._calculate_recent_event_factor(recent_events, pattern["sleep"])
+        
+        # Factor 3: Time since last update
+        time_factor = self._calculate_time_decay_factor()
+        
+        # Factor 4: Variance factor (if we have daily patterns to analyze)
+        variance_factor = self._calculate_variance_factor(day_of_week, "sleep")
+        
+        # Combined confidence
+        confidence = min(0.95, max(0.1, 
+            base_confidence * 0.3 +
+            detection_factor * 0.3 +
+            recent_factor * 0.2 +
+            time_factor * 0.1 +
+            variance_factor * 0.1
+        ))
+        
+        # Convert time string to datetime for today
+        try:
+            today = datetime.now().date()
+            time_parts = pattern["sleep"].split(":")
+            sleep_time = datetime.combine(today, datetime.min.time().replace(
+                hour=int(time_parts[0]),
+                minute=int(time_parts[1])
+            ))
+            
+            # If sleep time is before noon, it's for next day
+            if sleep_time.hour < 12:
+                sleep_time += timedelta(days=1)
+                
+            return sleep_time, confidence
+        except (ValueError, IndexError) as e:
+            logger.error(f"Error parsing sleep time: {e}")
+            return None, 0.0
+
+    def get_predicted_wake_time_for_day(self, day_of_week: int) -> Tuple[Optional[datetime], float]:
+        """
+        Get predicted wake time with confidence for a specific day of week.
+        
+        Args:
+            day_of_week: Day of week (0=Monday, 6=Sunday)
+            
+        Returns:
+            Tuple[Optional[datetime], float]: (predicted_wake_time, confidence)
+        """
+        weekday_key = str(day_of_week)
+        pattern = self.sleep_patterns["weekday_patterns"].get(weekday_key, {})
+        
+        if not pattern.get("wake"):
+            return None, 0.0
+        
+        # Calculate confidence based on multiple factors
+        detections = pattern.get("detections", 0)
+        base_confidence = pattern.get("confidence", 0)
+        
+        # Factor 1: Number of historical observations
+        detection_factor = min(1.0, detections / 10.0)  # Full confidence at 10+ detections
+        
+        # Factor 2: Recent events impact
+        recent_events = self._get_recent_events_for_weekday(day_of_week, "wake_up")
+        recent_factor = self._calculate_recent_event_factor(recent_events, pattern["wake"])
+        
+        # Factor 3: Time since last update
+        time_factor = self._calculate_time_decay_factor()
+        
+        # Factor 4: Variance factor (if we have daily patterns to analyze)
+        variance_factor = self._calculate_variance_factor(day_of_week, "wake")
+        
+        # Combined confidence
+        confidence = min(0.95, max(0.1, 
+            base_confidence * 0.3 +
+            detection_factor * 0.3 +
+            recent_factor * 0.2 +
+            time_factor * 0.1 +
+            variance_factor * 0.1
+        ))
+        
+        # Convert time string to datetime for today
+        try:
+            today = datetime.now().date()
+            time_parts = pattern["wake"].split(":")
+            wake_time = datetime.combine(today, datetime.min.time().replace(
+                hour=int(time_parts[0]),
+                minute=int(time_parts[1])
+            ))
+            
+            # If wake time is in afternoon, it's for next day
+            if wake_time.hour > 12:
+                wake_time += timedelta(days=1)
+                
+            return wake_time, confidence
+        except (ValueError, IndexError) as e:
+            logger.error(f"Error parsing wake time: {e}")
+            return None, 0.0
+
+    def _get_recent_events_for_weekday(self, day_of_week: int, event_type: str, days_back: int = 7) -> list:
+        """Get recent events for a specific weekday and event type."""
+        recent_events = []
+        cutoff_date = datetime.now() - timedelta(days=days_back)
+        
+        for event in self.sleep_patterns.get("detected_events", []):
+            try:
+                event_time = datetime.fromisoformat(event["timestamp"])
+                if (event_time > cutoff_date and 
+                    event["weekday"] == day_of_week and 
+                    event["type"] == event_type):
+                    recent_events.append(event)
+            except:
+                continue
+        
+        return recent_events
+
+    def _calculate_recent_event_factor(self, recent_events: list, pattern_time: str) -> float:
+        """Calculate confidence factor based on recent events."""
+        if not recent_events:
+            return 0.8  # Neutral factor when no recent events
+        
+        # Calculate variance of recent events from the pattern
+        try:
+            pattern_minutes = self._time_str_to_minutes(pattern_time)
+            event_minutes = []
+            
+            for event in recent_events:
+                event_time = datetime.fromisoformat(event["timestamp"])
+                event_mins = event_time.hour * 60 + event_time.minute
+                event_minutes.append(event_mins)
+            
+            if event_minutes:
+                variance = np.var(event_minutes)
+                # Lower variance = higher confidence
+                return max(0.3, min(1.0, 1.0 - (variance / 1800)))  # Normalize variance
+        except:
+            pass
+        
+        return 0.8  # Default factor
+
+    def _calculate_time_decay_factor(self) -> float:
+        """Calculate confidence factor based on time since last update."""
+        try:
+            last_updated = datetime.fromisoformat(self.sleep_patterns.get("last_updated", datetime.now().isoformat()))
+            days_since_update = (datetime.now() - last_updated).days
+            
+            # Confidence decays over time
+            if days_since_update <= 1:
+                return 1.0
+            elif days_since_update <= 7:
+                return 0.9
+            elif days_since_update <= 30:
+                return 0.7
+            else:
+                return 0.5
+        except:
+            return 0.8  # Default factor
+
+    def _calculate_variance_factor(self, day_of_week: int, time_type: str) -> float:
+        """Calculate confidence factor based on historical variance."""
+        # Look at daily patterns for this weekday
+        day_patterns = []
+        for date_str, pattern in self.sleep_patterns.get("daily_patterns", {}).items():
+            try:
+                date = datetime.fromisoformat(date_str.replace(' ', 'T') if ' ' in date_str else date_str).date()
+                if pattern.get("weekday", -1) == day_of_week and pattern.get(time_type):
+                    day_patterns.append(pattern[time_type])
+            except:
+                continue
+        
+        if len(day_patterns) < 3:
+            return 0.8  # Need at least 3 patterns to calculate variance
+        
+        # Calculate variance in minutes
+        try:
+            pattern_minutes = [self._time_str_to_minutes(t) for t in day_patterns]
+            variance = np.var(pattern_minutes)
+            
+            # Lower variance = higher confidence
+            return max(0.4, min(1.0, 1.0 - (variance / 1800)))  # Normalize variance
+        except:
+            return 0.8  # Default factor
+
     def _real_time_pattern_analysis(self):
         """
         Perform real-time analysis of CO2 patterns.
@@ -842,13 +1047,18 @@ class AdaptiveSleepAnalyzer:
                 day_name = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][int(day_key)]
                 
                 if pattern["sleep"] and pattern["wake"]:
+                    # Get confidence for today's predictions
+                    sleep_time, sleep_confidence = self.get_predicted_sleep_time_for_day(int(day_key))
+                    wake_time, wake_confidence = self.get_predicted_wake_time_for_day(int(day_key))
+                    
                     summary["weekday_patterns"][day_name] = {
                         "sleep": pattern["sleep"],
                         "wake": pattern["wake"],
-                        "confidence": f"{pattern['confidence']:.2f}",
+                        "sleep_confidence": sleep_confidence,
+                        "wake_confidence": wake_confidence,
                         "detections": pattern["detections"]
                     }
-                    summary["confidence_levels"][day_name] = pattern["confidence"]
+                    summary["confidence_levels"][day_name] = max(sleep_confidence, wake_confidence)
             
             # Get recent events (last 5)
             events = self.sleep_patterns["detected_events"][-5:]
