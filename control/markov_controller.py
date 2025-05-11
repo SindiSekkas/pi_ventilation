@@ -47,6 +47,10 @@ class Action(Enum):
 class MarkovController:
     """Markov Decision Process based ventilation controller."""
     
+    # Constants for dynamic exploration rate
+    MIN_EXPLORATION_RATE = 0.01
+    MAX_EXPLORATION_RATE = 0.5
+    
     def __init__(self, data_manager, pico_manager, preference_manager=None, model_dir="data/markov", scan_interval=60, occupancy_analyzer=None):
         """
         Initialize the Markov controller.
@@ -128,7 +132,7 @@ class MarkovController:
         # Control state
         self.auto_mode = True
         self.learning_rate = 0.1  # How quickly model adapts to new information
-        self.exploration_rate = 0.2  # Chance of trying random action
+        self._base_exploration_rate = 0.2  # Base chance of trying random action (renamed from exploration_rate)
         self.random_action_decay = 0.9999  # Decay rate for exploration
         self.last_best_value = float('-inf') # ADDED THIS LINE
         
@@ -620,16 +624,18 @@ class MarkovController:
             logger.warning(f"Unknown state: {self.current_state}, defaulting to TURN_OFF")
             return Action.TURN_OFF.value
 
-        if random.random() < self.exploration_rate:
+        # Calculate current exploration rate dynamically
+        current_exploration_rate = self._calculate_dynamic_exploration_rate()
+
+        if random.random() < current_exploration_rate:
             # Ensure there are actions defined for the current state before choosing randomly
             if self.transition_model.get(self.current_state):
                 random_action = random.choice(list(self.transition_model[self.current_state].keys()))
-                logger.info(f"Exploring random action: {random_action}")
+                logger.info(f"Exploring random action: {random_action} (exploration_rate: {current_exploration_rate:.3f})")
                 return random_action
             else:
                 logger.warning(f"No actions defined for state {self.current_state} in model, defaulting to TURN_OFF")
                 return Action.TURN_OFF.value
-
 
         best_action = None
         best_value = float('-inf')
@@ -811,16 +817,210 @@ class MarkovController:
                  best_action = Action.TURN_OFF.value # Ultimate fallback
                  logger.warning(f"No actions available for state {self.current_state} or values led to no action, defaulting to OFF.")
 
-
-        self.exploration_rate *= self.random_action_decay
+        # Apply new dynamic exploration rate calculation
+        self._base_exploration_rate *= self.random_action_decay
         
         self.last_best_value = best_value # ADDED THIS LINE
-        logger.info(f"Selected action: {best_action} for state: {self.current_state} (best_value: {best_value:.2f})")
+        logger.info(f"Selected action: {best_action} for state: {self.current_state} (best_value: {best_value:.2f}, exploration_rate: {current_exploration_rate:.3f})")
         # Log active thresholds for context
         log_active_co2_thr, log_active_temp_thr = self._get_current_target_thresholds(current_occupants) # Re-fetch for logging consistency
         logger.info(f"Using thresholds - CO2: {log_active_co2_thr}, Temp: {log_active_temp_thr}")
         
         return best_action
+    
+    def _calculate_dynamic_exploration_rate(self):
+        """
+        Calculate the dynamic exploration rate based on model confidence, 
+        current state value, and preference effectiveness.
+        
+        Returns:
+            float: Calculated exploration rate
+        """
+        # Calculate modifiers
+        model_confidence_modifier = self._calculate_model_confidence_modifier()
+        current_state_value_modifier = self._calculate_current_state_value_modifier()
+        preference_effectiveness_modifier = self._calculate_preference_effectiveness_modifier()
+        
+        # Calculate dynamic exploration rate
+        current_exploration_rate = (
+            self._base_exploration_rate * 
+            model_confidence_modifier * 
+            current_state_value_modifier * 
+            preference_effectiveness_modifier
+        )
+        
+        # Constrain to reasonable limits
+        current_exploration_rate = max(self.MIN_EXPLORATION_RATE, 
+                                     min(self.MAX_EXPLORATION_RATE, current_exploration_rate))
+        
+        # Log the calculation details
+        logger.debug(f"Dynamic exploration rate calculation:")
+        logger.debug(f"  Base rate: {self._base_exploration_rate:.4f}")
+        logger.debug(f"  Model confidence modifier: {model_confidence_modifier:.4f}")
+        logger.debug(f"  State value modifier: {current_state_value_modifier:.4f}")
+        logger.debug(f"  Preference effectiveness modifier: {preference_effectiveness_modifier:.4f}")
+        logger.debug(f"  Final rate (constrained): {current_exploration_rate:.4f}")
+        
+        return current_exploration_rate
+    
+    def _calculate_model_confidence_modifier(self):
+        """
+        Calculate modifier based on model's confidence in its choice.
+        High confidence -> lower exploration (modifier < 1.0)
+        Low confidence -> higher exploration (modifier > 1.0)
+        
+        Returns:
+            float: Confidence modifier
+        """
+        if not self.current_state or self.current_state not in self.transition_model:
+            return 1.0  # Default modifier
+        
+        # First calculate action values
+        action_values = {}
+        for action_key_str in self.transition_model[self.current_state]:
+            if not self.transition_model[self.current_state].get(action_key_str):
+                continue
+                
+            action_total_expected_value = 0
+            for next_state_key_str, probability in self.transition_model[self.current_state][action_key_str].items():
+                if probability < 0.001:
+                    continue
+                    
+                parsed_next_state = self._parse_state_key(next_state_key_str)
+                if not parsed_next_state:
+                    continue
+                
+                # Simplified state value calculation (just for confidence)
+                state_value = 0
+                co2_level_next = parsed_next_state.get("co2_level")
+                if co2_level_next == CO2Level.LOW.value:
+                    state_value = 2.0
+                elif co2_level_next == CO2Level.MEDIUM.value:
+                    state_value = 0.5
+                elif co2_level_next == CO2Level.HIGH.value:
+                    state_value = -3.0
+                
+                action_total_expected_value += probability * state_value
+            
+            action_values[action_key_str] = action_total_expected_value
+        
+        if len(action_values) < 2:
+            return 1.0  # Not enough actions to determine confidence
+        
+        # Get best and second best values
+        sorted_values = sorted(action_values.values(), reverse=True)
+        best_value = sorted_values[0]
+        second_best_value = sorted_values[1]
+        
+        # Calculate confidence gap
+        value_gap = best_value - second_best_value
+        
+        # Determine modifier based on confidence
+        if value_gap > 1.0:  # High confidence
+            return 0.6  # Reduce exploration
+        elif value_gap > 0.5:
+            return 0.8
+        elif value_gap < -0.5:  # Very uncertain (negative gap)
+            return 1.5  # Increase exploration
+        elif value_gap < 0.2:  # Low confidence
+            return 1.3
+        else:
+            return 1.0  # Medium confidence
+    
+    def _calculate_current_state_value_modifier(self):
+        """
+        Calculate modifier based on current state value.
+        Good state -> more exploration allowed (modifier > 1.0)
+        Bad state -> less exploration (modifier < 1.0)
+        
+        Returns:
+            float: State value modifier
+        """
+        current_occupants = self.data_manager.latest_data["room"]["occupants"]
+        co2 = self.data_manager.latest_data["scd41"]["co2"]
+        temp = self.data_manager.latest_data["scd41"]["temperature"]
+        
+        # Get current target thresholds
+        active_co2_thr, active_temp_thr = self._get_current_target_thresholds(current_occupants)
+        
+        # Evaluate current state quality
+        state_quality_score = 0
+        
+        # CO2 component
+        if co2 is not None:
+            if co2 < active_co2_thr["low_max"]:
+                state_quality_score += 2.0  # Good air quality
+            elif co2 < active_co2_thr["medium_max"]:
+                state_quality_score += 0.5  # Acceptable
+            else:
+                state_quality_score -= 3.0  # Poor air quality
+                
+                # Worse if occupied
+                if current_occupants > 0:
+                    state_quality_score -= 2.0
+        
+        # Temperature component
+        if temp is not None:
+            if active_temp_thr["low_max"] <= temp <= active_temp_thr["medium_max"]:
+                state_quality_score += 1.0  # Comfortable temperature
+            elif temp < active_temp_thr["low_max"] - 2:
+                state_quality_score -= 1.0  # Too cold
+            elif temp > active_temp_thr["medium_max"] + 2:
+                state_quality_score -= 1.0  # Too hot
+        
+        # Determine modifier based on state quality
+        if state_quality_score >= 2.0:  # Very good state
+            if current_occupants == 0:
+                return 2.0  # Empty home in good state - can experiment
+            else:
+                return 1.5  # Occupied but comfortable - some experimentation allowed
+        elif state_quality_score <= -2.0:  # Bad state
+            if current_occupants > 0:
+                return 0.3  # Occupied and uncomfortable - stick to known good actions
+            else:
+                return 0.6  # Empty but bad state - somewhat conservative
+        else:  # Medium state quality
+            return 1.0
+    
+    def _calculate_preference_effectiveness_modifier(self):
+        """
+        Calculate modifier based on how well current preferences satisfy users.
+        Low effectiveness -> more exploration needed (modifier > 1.0)
+        High effectiveness -> current settings work well (modifier < 1.0)
+        
+        Returns:
+            float: Preference effectiveness modifier
+        """
+        if not self.preference_manager:
+            return 1.0  # No preference manager available
+        
+        try:
+            # Get all user preferences
+            all_user_preferences = self.preference_manager.get_all_user_preferences()
+            
+            if not all_user_preferences:
+                return 1.0  # No users to calculate effectiveness for
+            
+            # Calculate compromise preference
+            all_user_ids = list(all_user_preferences.keys())
+            compromise = self.preference_manager.calculate_compromise_preference(all_user_ids)
+            
+            # Use effectiveness score
+            effectiveness_score = compromise.effectiveness_score
+            
+            # Determine modifier based on effectiveness
+            if effectiveness_score < 0.5:  # Low effectiveness
+                return 1.6  # Increase exploration significantly
+            elif effectiveness_score < 0.7:
+                return 1.3  # Moderate increase in exploration
+            elif effectiveness_score > 0.8:  # High effectiveness
+                return 0.7  # Reduce exploration
+            else:  # Medium effectiveness
+                return 1.0
+                
+        except Exception as e:
+            logger.error(f"Error calculating preference effectiveness modifier: {e}")
+            return 1.0  # Default modifier on error
     
     def _execute_action(self, action):
         """
@@ -920,13 +1120,17 @@ class MarkovController:
         # Get current occupancy for status report
         occupants = self.data_manager.latest_data["room"]["occupants"]
         
+        # Calculate current exploration rate for status
+        current_exploration_rate = self._calculate_dynamic_exploration_rate()
+        
         return {
             "auto_mode": self.auto_mode,
             "co2_thresholds": self.co2_thresholds,
             "temp_thresholds": self.temp_thresholds,
             "current_state": self.current_state,
             "last_action": self.last_action,
-            "exploration_rate": self.exploration_rate,
+            "base_exploration_rate": self._base_exploration_rate,  # Base rate
+            "current_exploration_rate": current_exploration_rate,  # Dynamic rate
             "ventilation_status": self.pico_manager.get_ventilation_status(),
             "ventilation_speed": self.pico_manager.get_ventilation_speed(),
             "last_action_time": self.last_action_time.isoformat() if self.last_action_time else None,
