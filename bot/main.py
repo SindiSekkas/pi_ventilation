@@ -21,16 +21,12 @@ from bot.handlers.ventilation import setup_ventilation_handlers, handle_vent_cal
 from bot.handlers.sleep_patterns import setup_sleep_handlers
 from predictive.occupancy_pattern_analyzer import OccupancyPatternAnalyzer # Added import
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("bot.log"),
-        logging.StreamHandler()
-    ]
-)
 logger = logging.getLogger(__name__)
+bot_file_handler = logging.FileHandler("bot.log")
+bot_file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+bot_file_handler.setFormatter(bot_file_formatter)
+bot_file_handler.setLevel(logging.INFO)
+logger.addHandler(bot_file_handler)
 
 async def async_main(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None, occupancy_analyzer=None): # Added occupancy_analyzer parameter
     """Async main bot function."""
