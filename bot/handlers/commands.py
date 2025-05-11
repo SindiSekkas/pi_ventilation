@@ -1,5 +1,5 @@
 # bot/handlers/commands.py
-"""Command handlers for the bot."""
+"""Command handlers for the Telegram bot."""
 import logging
 import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -14,7 +14,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     user_auth = context.application.bot_data["user_auth"]
     
-    # Check if this is the first user
+    # Check if first user
     first_user = user_auth.process_first_user_if_needed(user_id)
     
     if first_user:
@@ -23,7 +23,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logger.info(f"First user {user_id} registered")
     elif user_auth.is_trusted(user_id):
-        # Show menu for trusted users
+        # Menu for trusted users
         reply_markup = create_main_menu()
         await update.message.reply_text(
             get_main_menu_message(user.first_name),
@@ -31,7 +31,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logger.info(f"Start command from trusted user {user_id}")
     else:
-        # Politely reject untrusted users
         await update.message.reply_text(
             "Sorry, you are not authorized to use this bot."
         )
@@ -111,7 +110,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_auth.start_adding_user(user_id)
     
-    # Create cancel button
+    # Cancel button
     keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_add_user")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -133,7 +132,6 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Unauthorized cancel attempt from user {user_id}")
         return
     
-    # Cancel add user mode if active
     if user_auth.is_adding_user_mode():
         user_auth.stop_adding_user()
         await update.message.reply_text("Operation cancelled.")
@@ -152,7 +150,6 @@ async def linkphone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Unauthorized linkphone attempt from user {user_id}")
         return
     
-    # Parse arguments
     if len(context.args) != 1:
         await update.message.reply_text(
             "Usage: /linkphone <MAC-address>\n"
@@ -162,18 +159,17 @@ async def linkphone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     mac_address = context.args[0].lower()
     
-    # Validate MAC address format
+    # Validate MAC format
     if not re.match(r'^([0-9a-f]{2}[:-]){5}([0-9a-f]{2})$', mac_address):
         await update.message.reply_text("Please enter a valid MAC address (e.g., aa:bb:cc:dd:ee:ff)")
         return
     
-    # Get device manager
     device_manager = context.application.bot_data.get("device_manager")
     if not device_manager:
         await update.message.reply_text("Device management is not available.")
         return
     
-    # Check if device exists
+    # Find device
     found_device = None
     for mac, device in device_manager.devices.items():
         if mac.lower() == mac_address.lower():
@@ -181,14 +177,13 @@ async def linkphone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
     
     if not found_device:
-        # Device not found - offer to create it
         await update.message.reply_text(
             f"Device with MAC {mac_address} not found in the system.\n"
             "Please ensure your phone is currently connected to the network first."
         )
         return
     
-    # Verify it's a phone
+    # Check device type
     if found_device.device_type != "phone":
         await update.message.reply_text(
             f"Device {mac_address} is not a phone (it's a {found_device.device_type}).\n"
@@ -196,7 +191,7 @@ async def linkphone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Link device to user
+    # Link device
     success = device_manager.link_device_to_telegram_user(mac_address, user_id)
     
     if success:
@@ -220,7 +215,6 @@ async def unlinkphone_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.warning(f"Unauthorized unlinkphone attempt from user {user_id}")
         return
     
-    # Parse arguments
     if len(context.args) != 1:
         await update.message.reply_text(
             "Usage: /unlinkphone <MAC-address>\n"
@@ -230,18 +224,17 @@ async def unlinkphone_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     mac_address = context.args[0].lower()
     
-    # Validate MAC address format
+    # Validate MAC format
     if not re.match(r'^([0-9a-f]{2}[:-]){5}([0-9a-f]{2})$', mac_address):
         await update.message.reply_text("Please enter a valid MAC address (e.g., aa:bb:cc:dd:ee:ff)")
         return
     
-    # Get device manager
     device_manager = context.application.bot_data.get("device_manager")
     if not device_manager:
         await update.message.reply_text("Device management is not available.")
         return
     
-    # Check if device exists and is linked to this user
+    # Find device
     found_device = None
     for mac, device in device_manager.devices.items():
         if mac.lower() == mac_address.lower():
@@ -270,7 +263,7 @@ async def unlinkphone_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.error(f"Failed to unlink phone {mac_address} for user {user_id}")
 
 async def ping_phone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle command to manually test Telegram ping."""
+    """Test Telegram ping to phone."""
     user = update.effective_user
     user_id = user.id
     user_auth = context.application.bot_data["user_auth"]
@@ -280,7 +273,6 @@ async def ping_phone_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.warning(f"Unauthorized pingphone command from user {user_id}")
         return
     
-    # Parse arguments
     if len(context.args) != 1:
         await update.message.reply_text(
             "Usage: /pingphone <MAC-address>\\n"
@@ -290,18 +282,17 @@ async def ping_phone_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     mac_address = context.args[0].lower()
     
-    # Validate MAC address format
+    # Validate MAC format
     if not re.match(r'^([0-9a-f]{2}[:-]){5}([0-9a-f]{2})$', mac_address):
         await update.message.reply_text("Please enter a valid MAC address (e.g., aa:bb:cc:dd:ee:ff)")
         return
     
-    # Get device manager
     device_manager = context.application.bot_data.get("device_manager")
     if not device_manager:
         await update.message.reply_text("Device management is not available.")
         return
     
-    # Check if device exists and is linked to this user
+    # Find device
     found_device = None
     for mac, device in device_manager.devices.items():
         if mac.lower() == mac_address.lower():
@@ -316,7 +307,7 @@ async def ping_phone_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"Device {mac_address} is not linked to your account.")
         return
     
-    # Queue Telegram ping task
+    # Queue ping task
     telegram_ping_queue = context.application.bot_data.get("telegram_ping_tasks_queue")
     if telegram_ping_queue:
         ping_task = {
@@ -331,13 +322,12 @@ async def ping_phone_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Telegram ping queue is not available.")
 
 async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle button callback queries."""
+    """Handle button callbacks."""
     query = update.callback_query
     user = query.from_user
     user_id = user.id
     user_auth = context.application.bot_data["user_auth"]
     
-    # Always answer the callback query
     await query.answer()
     
     if not user_auth.is_trusted(user_id):
@@ -346,10 +336,8 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         return
     
     if query.data == "add_user":
-        # Start add user process
         user_auth.start_adding_user(user_id)
         
-        # Update message with cancel button
         keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_add_user")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -361,10 +349,8 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         logger.info(f"User {user_id} started add user process via button")
         
     elif query.data == "cancel_add_user":
-        # Cancel add user process
         user_auth.stop_adding_user()
         
-        # Return to main menu
         reply_markup = create_main_menu()
         await query.edit_message_text(
             text=f"Operation cancelled. {get_main_menu_message(user.first_name)}",
@@ -373,7 +359,6 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         logger.info(f"User {user_id} cancelled add user process via button")
     
     elif query.data == "back_to_main":
-        # Return to main menu
         reply_markup = create_main_menu()
         await query.edit_message_text(
             text=get_main_menu_message(user.first_name),
@@ -407,7 +392,7 @@ async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_T
         logger.info(f"User {user_id} accessed home activity menu")
 
 def setup_command_handlers(app):
-    """Register all command handlers."""
+    """Register command handlers."""
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("adduser", add_user_command))

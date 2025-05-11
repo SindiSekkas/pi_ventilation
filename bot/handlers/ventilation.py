@@ -8,14 +8,14 @@ from bot.menu import create_main_menu, create_back_to_main_menu_keyboard, get_ma
 logger = logging.getLogger(__name__)
 
 def _get_detailed_status_text(pico_manager, controller, data_manager) -> str:
-    """Generates a detailed ventilation status string."""
+    """Generate a detailed ventilation status text including sensor readings."""
     # Get ventilation status
     current_status = pico_manager.get_ventilation_status()
     current_speed = pico_manager.get_ventilation_speed()
     
     # Get controller status
     controller_status = controller.get_status() if controller else {"auto_mode": False}
-    auto_mode = controller_status.get("auto_mode", False) # Ensure default if key missing
+    auto_mode = controller_status.get("auto_mode", False)
     last_action = controller_status.get("last_action", "None")
     
     status_text = "📋 Ventilation Status:\n"
@@ -34,7 +34,7 @@ def _get_detailed_status_text(pico_manager, controller, data_manager) -> str:
             status_text += " | Currently Active"
         status_text += "\n"
     
-    status_text += "\n" # Extra newline for separation
+    status_text += "\n"
     
     if data_manager and hasattr(data_manager, 'latest_data'):
         scd41_data = data_manager.latest_data.get("scd41", {})
@@ -59,7 +59,7 @@ def _get_detailed_status_text(pico_manager, controller, data_manager) -> str:
     return status_text
 
 async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /vent command to show ventilation control menu."""
+    """Display ventilation control menu to authorized users."""
     user = update.effective_user
     user_id = user.id
     user_auth = context.application.bot_data["user_auth"]
@@ -71,24 +71,19 @@ async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     pico_manager = context.application.bot_data["pico_manager"]
     controller = context.application.bot_data.get("controller")
-    data_manager = context.application.bot_data.get("data_manager") # Fetch data_manager
+    data_manager = context.application.bot_data.get("data_manager")
     
-    # Get current auto_mode status for button text
     auto_mode = controller.get_status()["auto_mode"] if controller else False
     
-    # Create ventilation control menu
     keyboard = []
     
-    # Add auto mode toggle
     auto_text = "🔴 Disable Auto Mode" if auto_mode else "🟢 Enable Auto Mode"
     keyboard.append([InlineKeyboardButton(auto_text, callback_data="vent_auto_toggle")])
     
-    # Add night mode settings
-    if controller and hasattr(controller, 'night_mode_enabled'): # Check if controller supports night mode
+    if controller and hasattr(controller, 'night_mode_enabled'):
         night_text = "🌙 Night Mode Settings"
         keyboard.append([InlineKeyboardButton(night_text, callback_data="vent_night_settings")])
     
-    # Manual control buttons (disabled if auto mode is on)
     if auto_mode:
         keyboard.append([InlineKeyboardButton("⚠️ Manual Control (Auto Mode Active)", callback_data="vent_auto_notice")])
     else:
@@ -101,15 +96,11 @@ async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("🔼 Max", callback_data="vent_max")
         ])
     
-    # Status button
     keyboard.append([InlineKeyboardButton("📊 Check Status", callback_data="vent_status")])
-    
-    # Main menu button
     keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Use the helper function for detailed status text
     detailed_status_text = _get_detailed_status_text(pico_manager, controller, data_manager)
     
     await update.message.reply_text(
@@ -118,7 +109,7 @@ async def vent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def vent_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /ventstatus command to show current ventilation status."""
+    """Show current ventilation status to authorized users."""
     user = update.effective_user
     user_id = user.id
     user_auth = context.application.bot_data["user_auth"]
@@ -132,13 +123,12 @@ async def vent_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     controller = context.application.bot_data.get("controller")
     data_manager = context.application.bot_data.get("data_manager")
     
-    # Use the helper function for detailed status text
     status_text = _get_detailed_status_text(pico_manager, controller, data_manager)
     
     await update.message.reply_text(status_text)
 
 async def handle_vent_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle ventilation control callback queries."""
+    """Process ventilation control callback queries."""
     query = update.callback_query
     user = query.from_user
     user_id = user.id
@@ -288,7 +278,7 @@ async def handle_vent_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.error(f"Failed to set ventilation to {action} for user {user_id}")
 
 async def show_night_settings_menu(query, controller):
-    """Show night mode settings menu."""
+    """Display night mode configuration options."""
     if not controller or not hasattr(controller, 'night_mode_enabled'):
         await query.edit_message_text("⚠️ Night mode settings not available.")
         return
@@ -327,7 +317,7 @@ async def show_night_settings_menu(query, controller):
     await query.edit_message_text(status_text, reply_markup=reply_markup)
 
 async def handle_night_mode_callbacks(query, controller, action):
-    """Handle night mode specific callbacks."""
+    """Process night mode setting callbacks."""
     if not controller or not hasattr(controller, 'set_night_mode'):
         await query.edit_message_text("⚠️ Night mode settings not available.")
         return
@@ -391,27 +381,22 @@ async def handle_night_mode_callbacks(query, controller, action):
         )
 
 async def show_vent_menu(message, context):
-    """Show ventilation menu after a delay."""
+    """Display ventilation control menu."""
     pico_manager = context.application.bot_data["pico_manager"]
     controller = context.application.bot_data.get("controller")
-    data_manager = context.application.bot_data.get("data_manager") # Fetch data_manager
+    data_manager = context.application.bot_data.get("data_manager")
     
-    # Get current auto_mode status for button text
     auto_mode = controller.get_status()["auto_mode"] if controller else False
     
-    # Create ventilation control menu
     keyboard = []
     
-    # Add auto mode toggle
     auto_text = "🔴 Disable Auto Mode" if auto_mode else "🟢 Enable Auto Mode"
     keyboard.append([InlineKeyboardButton(auto_text, callback_data="vent_auto_toggle")])
     
-    # Add night mode settings
-    if controller and hasattr(controller, 'night_mode_enabled'): # Check if controller supports night mode
+    if controller and hasattr(controller, 'night_mode_enabled'):
         night_text = "🌙 Night Mode Settings"
         keyboard.append([InlineKeyboardButton(night_text, callback_data="vent_night_settings")])
     
-    # Manual control buttons (disabled if auto mode is on)
     if auto_mode:
         keyboard.append([InlineKeyboardButton("⚠️ Manual Control (Auto Mode Active)", callback_data="vent_auto_notice")])
     else:
@@ -424,15 +409,11 @@ async def show_vent_menu(message, context):
             InlineKeyboardButton("🔼 Max", callback_data="vent_max")
         ])
     
-    # Status button
     keyboard.append([InlineKeyboardButton("📊 Check Status", callback_data="vent_status")])
-    
-    # Main menu button
     keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Use the helper function for detailed status text
     detailed_status_text = _get_detailed_status_text(pico_manager, controller, data_manager)
     
     await message.edit_text(
@@ -441,7 +422,7 @@ async def show_vent_menu(message, context):
     )
 
 def setup_ventilation_handlers(app):
-    """Register ventilation control handlers."""
+    """Register ventilation control handlers with the application."""
     app.add_handler(CommandHandler("vent", vent_command))
     app.add_handler(CommandHandler("ventstatus", vent_status_command))
     app.add_handler(CallbackQueryHandler(handle_vent_callback, pattern='^vent_'))

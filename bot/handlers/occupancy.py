@@ -10,7 +10,7 @@ from bot.menu import create_back_to_main_menu_keyboard
 logger = logging.getLogger(__name__)
 
 async def show_home_patterns_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /homepatterns command to show home occupancy patterns."""
+    """Handle /homepatterns command."""
     user = update.effective_user
     user_id = user.id
     user_auth = context.application.bot_data["user_auth"]
@@ -23,7 +23,7 @@ async def show_home_patterns_command(update: Update, context: ContextTypes.DEFAU
     await show_home_patterns(update.message, context)
 
 async def show_next_event_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /nextevent command to show next expected home activity change."""
+    """Handle /nextevent command."""
     user = update.effective_user
     user_id = user.id
     user_auth = context.application.bot_data["user_auth"]
@@ -36,8 +36,7 @@ async def show_next_event_command(update: Update, context: ContextTypes.DEFAULT_
     await show_next_event(update.message, context)
 
 async def show_home_patterns(message, context, is_edit=False):
-    """Show home occupancy patterns."""
-    # Get occupancy analyzer from context
+    """Display home occupancy patterns."""
     occupancy_analyzer = context.application.bot_data.get("occupancy_analyzer")
     if not occupancy_analyzer:
         text = "Home activity patterns are currently unavailable."
@@ -48,22 +47,17 @@ async def show_home_patterns(message, context, is_edit=False):
         logger.error("Occupancy analyzer not found in bot context")
         return
     
-    # Get pattern summary
     summary = occupancy_analyzer.get_pattern_summary()
     
-    # Format the message
     text = "*Home Activity Patterns*\n\n"
     
-    # Add last update time
     if summary.get("last_update"):
         last_update = datetime.fromisoformat(summary["last_update"]).strftime('%Y-%m-%d %H:%M')
         text += f"📅 Last updated: {last_update}\n"
     
-    # Add total patterns count
     total = summary.get("total_patterns", 0)
     text += f"📊 Total learned patterns: {total}\n\n"
     
-    # Add typical empty hours by day
     text += "*Typical Empty Hours by Day:*\n"
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     empty_ranges = summary.get("empty_hour_ranges", {})
@@ -80,7 +74,6 @@ async def show_home_patterns(message, context, is_edit=False):
         else:
             text += f"*{day}*: No clear pattern\n"
     
-    # Create inline keyboard
     keyboard = [
         [InlineKeyboardButton("🔄 Refresh", callback_data="refresh_home_patterns")],
         [InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")]
@@ -95,8 +88,7 @@ async def show_home_patterns(message, context, is_edit=False):
     logger.info(f"Showed home patterns for user")
 
 async def show_next_event(message, context, is_edit=False):
-    """Show next expected home activity change."""
-    # Get required components from context
+    """Display next predicted home event."""
     occupancy_analyzer = context.application.bot_data.get("occupancy_analyzer")
     data_manager = context.application.bot_data.get("data_manager")
     
@@ -106,26 +98,18 @@ async def show_next_event(message, context, is_edit=False):
             await message.edit_text(text, reply_markup=create_back_to_main_menu_keyboard())
         else:
             await message.reply_text(text, reply_markup=create_back_to_main_menu_keyboard())
-        logger.error("Missing occupancy analyzer or data manager in bot context")
+        logger.error("Missing occupancy analyzer or data manager")
         return
     
-    # Get current occupancy
     current_occupants = data_manager.latest_data["room"]["occupants"]
     now = datetime.now()
     
-    # Get next significant event
     next_event = occupancy_analyzer.get_next_significant_event(now)
-    
-    # Get current period information
     current_period = occupancy_analyzer.get_predicted_current_period(now)
     
-    # Format message based on current occupancy status
     text = "*Next Home Activity Event*\n\n"
-    
-    # Show current status
     text += f"🏠 *Current Status:* {'Empty' if current_occupants == 0 else f'Occupied ({current_occupants} people)'}\n\n"
     
-    # Show current period information
     if current_period[0] and current_period[1] and current_period[2]:
         period_start, period_end, period_status, period_confidence = current_period
         status_icon = "🏠" if period_status == "EXPECTED_OCCUPIED" else "🌙"
@@ -133,7 +117,6 @@ async def show_next_event(message, context, is_edit=False):
         text += f"📅 Period: {period_start.strftime('%Y-%m-%d %H:%M')} to {period_end.strftime('%Y-%m-%d %H:%M')}\n"
         text += f"📊 Confidence: {period_confidence:.1%}\n\n"
     
-    # Show next event information
     if next_event[0] and next_event[1]:
         event_time, event_type, event_confidence = next_event
         event_icon = "🏠" if event_type == "EXPECTED_ARRIVAL" else "🚪"
@@ -143,7 +126,6 @@ async def show_next_event(message, context, is_edit=False):
     else:
         text += "🔮 *Next Event:* Unable to predict with confidence\n"
     
-    # Create inline keyboard
     keyboard = [
         [InlineKeyboardButton("🔄 Refresh", callback_data="refresh_next_event")],
         [InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")]
@@ -158,7 +140,7 @@ async def show_next_event(message, context, is_edit=False):
     logger.info(f"Showed next event for user")
 
 async def show_home_activity_menu(query_or_message, context, is_edit=True):
-    """Show home activity submenu."""
+    """Display home activity menu."""
     keyboard = [
         [InlineKeyboardButton("📊 Show Patterns", callback_data="show_home_patterns")],
         [InlineKeyboardButton("🔮 Next Event", callback_data="show_next_event")],
@@ -176,7 +158,7 @@ async def show_home_activity_menu(query_or_message, context, is_edit=True):
         await query_or_message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
 async def handle_occupancy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle occupancy-related callback queries."""
+    """Process occupancy callback queries."""
     query = update.callback_query
     user = query.from_user
     user_id = user.id
@@ -202,7 +184,6 @@ async def handle_occupancy_callback(update: Update, context: ContextTypes.DEFAUL
         logger.info(f"User {user_id} viewed next event via menu")
     
     elif query.data == "refresh_home_patterns":
-        # Refresh home patterns
         occupancy_analyzer = context.application.bot_data.get("occupancy_analyzer")
         if not occupancy_analyzer:
             await query.edit_message_text(
@@ -211,7 +192,6 @@ async def handle_occupancy_callback(update: Update, context: ContextTypes.DEFAUL
             )
             return
         
-        # Force reload and process history
         occupancy_analyzer._load_and_process_history()
         await show_home_patterns(query.message, context, is_edit=True)
         logger.info(f"User {user_id} refreshed home patterns")
@@ -227,7 +207,7 @@ async def handle_occupancy_callback(update: Update, context: ContextTypes.DEFAUL
         await handle_occupancy_feedback(update, context, "USER_CONFIRMED_AWAY")
 
 async def handle_occupancy_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE, feedback_status: str):
-    """Handle user feedback about their current occupancy status."""
+    """Process user feedback on occupancy status."""
     query = update.callback_query
     user_id = query.from_user.id
     occupancy_analyzer = context.application.bot_data.get("occupancy_analyzer")
@@ -239,11 +219,9 @@ async def handle_occupancy_feedback(update: Update, context: ContextTypes.DEFAUL
         )
         return
     
-    # Record the feedback
     now = datetime.now()
     occupancy_analyzer.record_user_feedback(now, feedback_status)
     
-    # Show confirmation message
     feedback_text = "Thanks for the feedback! I'll update my predictions.\n\n"
     
     if feedback_status == "USER_CONFIRMED_HOME":
@@ -253,7 +231,6 @@ async def handle_occupancy_feedback(update: Update, context: ContextTypes.DEFAUL
     
     feedback_text += "\n\nThis helps improve future occupancy predictions."
     
-    # Create keyboard to return to menu or main
     keyboard = [
         [InlineKeyboardButton("🏠 Back to Home Activity", callback_data="home_activity_menu")],
         [InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")]
@@ -268,7 +245,7 @@ async def handle_occupancy_feedback(update: Update, context: ContextTypes.DEFAUL
     logger.info(f"User {user_id} provided occupancy feedback: {feedback_status}")
 
 def setup_occupancy_handlers(app):
-    """Register occupancy handlers."""
+    """Register handlers."""
     app.add_handler(CommandHandler("homepatterns", show_home_patterns_command))
     app.add_handler(CommandHandler("nextevent", show_next_event_command))
     app.add_handler(CallbackQueryHandler(handle_occupancy_callback, pattern='^(home_activity_menu|show_home_patterns|show_next_event|refresh_home_patterns|refresh_next_event|occupancy_feedback_im_home|occupancy_feedback_im_away)$'))

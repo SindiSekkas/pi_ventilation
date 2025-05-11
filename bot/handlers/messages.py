@@ -6,17 +6,17 @@ from telegram.ext import MessageHandler, ContextTypes, filters
 
 logger = logging.getLogger(__name__)
 
-# Store context of waiting for night mode settings
+# Context for night mode settings
 night_mode_context = {}
 
 async def echo_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Echo text messages."""
+    """Process text messages."""
     user = update.effective_user
     user_id = user.id
     text = update.message.text
     user_auth = context.application.bot_data["user_auth"]
     
-    # Check if this is the first user
+    # Check if first user
     first_user = user_auth.process_first_user_if_needed(user_id)
     
     if first_user:
@@ -26,30 +26,25 @@ async def echo_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"First user {user_id} registered from message")
         return
         
-    # Check if we're in add user mode
+    # Handle add user mode
     if user_auth.is_adding_user_mode():
-        # Check if this is a new user (not already trusted)
         if not user_auth.is_trusted(user_id):
-            # Add the new user
             user_auth.add_trusted_user(user_id)
             
-            # Notify the user they've been added
             await update.message.reply_text(
                 f"Hi {user.first_name}! You have been added as a trusted user."
             )
             
-            # Stop add user mode
             user_auth.stop_adding_user()
             logger.info(f"New user {user_id} added as trusted")
             return
     
-    # Ignore messages from untrusted users
+    # Ignore untrusted users
     if not user_auth.is_trusted(user_id):
-        # Silently ignore
         logger.warning(f"Ignored message from untrusted user {user_id}")
         return
     
-    # Check if we're waiting for a night mode setting
+    # Handle night mode settings
     if user_id in night_mode_context:
         context_data = night_mode_context[user_id]
         controller = context.application.bot_data.get("controller")
@@ -68,7 +63,6 @@ async def echo_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             setting_type = context_data.get("type")
             
             if setting_type == "start":
-                # Set start hour
                 controller.set_night_mode(
                     enabled=controller.night_mode_enabled,
                     start_hour=hour,
@@ -76,7 +70,6 @@ async def echo_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await update.message.reply_text(f"✅ Night mode start hour set to {hour}:00")
             elif setting_type == "end":
-                # Set end hour
                 controller.set_night_mode(
                     enabled=controller.night_mode_enabled,
                     start_hour=None,
@@ -84,12 +77,9 @@ async def echo_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await update.message.reply_text(f"✅ Night mode end hour set to {hour}:00")
             
-            # Clear the context
             del night_mode_context[user_id]
             
-            # Return to night mode menu
             if context_data.get("message"):
-                # Show night settings menu again
                 from bot.handlers.ventilation import show_night_settings_menu
                 await show_night_settings_menu(context_data["message"], controller)
             
@@ -99,11 +89,11 @@ async def echo_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ Please enter a number between 0 and 23.")
             return
     
-    # Normal message handling for trusted users
+    # Echo for trusted users
     await update.message.reply_text(f"You said: {text}")
     logger.debug(f"Echo message from trusted user {user_id}: {text}")
 
 def setup_message_handlers(app):
-    """Register all message handlers."""
+    """Register message handlers."""
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo_message))
     logger.info("Message handlers registered")

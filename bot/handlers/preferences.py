@@ -1,5 +1,5 @@
 # bot/handlers/preferences.py
-"""Preference handlers for the bot."""
+"""User preference handlers."""
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -9,7 +9,7 @@ from bot.menu import create_main_menu, create_back_button, get_main_menu_message
 logger = logging.getLogger(__name__)
 
 async def myprefs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show user's current preferences."""
+    """Display user preferences."""
     user = update.effective_user
     user_id = user.id
     user_auth = context.application.bot_data["user_auth"]
@@ -19,17 +19,15 @@ async def myprefs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Unauthorized myprefs command from user {user_id}")
         return
     
-    # Use the helper function with the message object
     await show_preferences_menu(user_id, update.message, context)
 
 async def preference_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle preference menu request from a callback query."""
+    """Handle preference menu callback."""
     query = update.callback_query
     user = query.from_user
     user_id = user.id
     user_auth = context.application.bot_data["user_auth"]
     
-    # Always answer the callback query
     await query.answer()
     
     if not user_auth.is_trusted(user_id):
@@ -37,11 +35,10 @@ async def preference_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.warning(f"Unauthorized preference callback from user {user_id}")
         return
     
-    # Use the helper function with the callback query's message
     await show_preferences_menu(user_id, query.message, context, is_edit=True)
 
 async def show_preferences_menu(user_id, message_obj, context, is_edit=False):
-    """Helper function to show preferences menu that works with both messages and callback queries."""
+    """Display preferences menu."""
     preference_manager = context.application.bot_data.get("preference_manager")
     if not preference_manager:
         text = "Preference system is not available."
@@ -51,15 +48,12 @@ async def show_preferences_menu(user_id, message_obj, context, is_edit=False):
             await message_obj.reply_text(text)
         return
     
-    # Get user's first name
     user_first_name = None
     if hasattr(message_obj, 'chat'):
         user_first_name = message_obj.chat.first_name
     
-    # Get user's preferences
     preference = preference_manager.get_user_preference(user_id, user_first_name)
     
-    # Format preferences message
     text = f"*Your Comfort Preferences*\n\n"
     text += f"🌡️ **Temperature**: {preference.temp_min}°C - {preference.temp_max}°C\n"
     text += f"🌬️ **CO₂ Threshold**: {preference.co2_threshold} ppm\n"
@@ -69,7 +63,6 @@ async def show_preferences_menu(user_id, message_obj, context, is_edit=False):
     text += f"Air Quality: {'High' if preference.sensitivity_co2 >= 1.5 else 'Low' if preference.sensitivity_co2 <= 0.5 else 'Normal'}\n"
     text += f"Humidity: {'High' if preference.sensitivity_humidity >= 1.5 else 'Low' if preference.sensitivity_humidity <= 0.5 else 'Normal'}\n"
     
-    # Create inline keyboard
     keyboard = [
         [InlineKeyboardButton("🌡️ Temperature", callback_data="pref_temp"),
          InlineKeyboardButton("🌬️ CO₂", callback_data="pref_co2")],
@@ -86,7 +79,6 @@ async def show_preferences_menu(user_id, message_obj, context, is_edit=False):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Send or edit message based on context
     if is_edit:
         await message_obj.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
     else:
@@ -95,7 +87,7 @@ async def show_preferences_menu(user_id, message_obj, context, is_edit=False):
     logger.info(f"Showed preferences for user {user_id}")
 
 async def handle_preference_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle preference-related callback queries."""
+    """Process preference callbacks."""
     query = update.callback_query
     user = query.from_user
     user_id = user.id
@@ -114,7 +106,6 @@ async def handle_preference_callback(update: Update, context: ContextTypes.DEFAU
         return
     
     if query.data == "pref_show":
-        # Return to main preferences menu
         await show_preferences_menu(user_id, query.message, context, is_edit=True)
     elif query.data == "pref_temp":
         await show_temperature_settings(query, preference_manager, user_id)
@@ -139,7 +130,7 @@ async def handle_preference_callback(update: Update, context: ContextTypes.DEFAU
         await handle_sensitivity_setting(query, preference_manager, user_id)
 
 async def show_temperature_settings(query, preference_manager, user_id):
-    """Show temperature preference settings."""
+    """Display temperature settings."""
     preference = preference_manager.get_user_preference(user_id)
     
     text = f"*Temperature Preferences*\n\n"
@@ -159,7 +150,7 @@ async def show_temperature_settings(query, preference_manager, user_id):
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def show_co2_settings(query, preference_manager, user_id):
-    """Show CO2 preference settings."""
+    """Display CO2 settings."""
     preference = preference_manager.get_user_preference(user_id)
     
     text = f"*CO₂ Threshold*\n\n"
@@ -180,7 +171,7 @@ async def show_co2_settings(query, preference_manager, user_id):
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def show_humidity_settings(query, preference_manager, user_id):
-    """Show humidity preference settings."""
+    """Display humidity settings."""
     preference = preference_manager.get_user_preference(user_id)
     
     text = f"*Humidity Preferences*\n\n"
@@ -200,7 +191,7 @@ async def show_humidity_settings(query, preference_manager, user_id):
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def show_sensitivity_settings(query, preference_manager, user_id):
-    """Show sensitivity preference settings."""
+    """Display sensitivity settings."""
     preference = preference_manager.get_user_preference(user_id)
     
     text = f"*Sensitivity Settings*\n\n"
@@ -220,7 +211,7 @@ async def show_sensitivity_settings(query, preference_manager, user_id):
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def show_feedback_history(query, preference_manager, user_id):
-    """Show user's feedback history."""
+    """Display user feedback history."""
     summary = preference_manager.get_preference_summary(user_id)
     recent_feedback = summary["recent_feedback"]
     
@@ -249,7 +240,7 @@ async def show_feedback_history(query, preference_manager, user_id):
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def handle_feedback(query, context, feedback_type):
-    """Handle user comfort feedback."""
+    """Process user feedback on comfort."""
     user_id = query.from_user.id
     preference_manager = context.application.bot_data.get("preference_manager")
     data_manager = context.application.bot_data.get("data_manager")
@@ -258,13 +249,9 @@ async def handle_feedback(query, context, feedback_type):
         await query.edit_message_text("System not available.")
         return
     
-    # Get current sensor data
     current_sensor_data = data_manager.latest_data
-    
-    # Update preferences based on feedback
     preference_manager.update_preference_from_feedback(user_id, feedback_type, current_sensor_data)
     
-    # Show confirmation
     feedback_text = "Thank you for your feedback! "
     if feedback_type == "comfortable":
         feedback_text += "I've noted that you're comfortable with current conditions."
@@ -285,7 +272,7 @@ async def handle_feedback(query, context, feedback_type):
     await query.edit_message_text(feedback_text, reply_markup=reply_markup)
 
 async def handle_temperature_setting(query, preference_manager, user_id):
-    """Handle temperature setting adjustments."""
+    """Apply temperature setting changes."""
     preference = preference_manager.get_user_preference(user_id)
     
     if query.data == "temp_min_down":
@@ -302,7 +289,7 @@ async def handle_temperature_setting(query, preference_manager, user_id):
     await show_temperature_settings(query, preference_manager, user_id)
 
 async def handle_co2_setting(query, preference_manager, user_id):
-    """Handle CO2 setting adjustments."""
+    """Apply CO2 setting changes."""
     preference = preference_manager.get_user_preference(user_id)
     
     if query.data == "co2_down_50":
@@ -319,7 +306,7 @@ async def handle_co2_setting(query, preference_manager, user_id):
     await show_co2_settings(query, preference_manager, user_id)
 
 async def handle_humidity_setting(query, preference_manager, user_id):
-    """Handle humidity setting adjustments."""
+    """Apply humidity setting changes."""
     preference = preference_manager.get_user_preference(user_id)
     
     if query.data == "humidity_min_down":
@@ -336,7 +323,7 @@ async def handle_humidity_setting(query, preference_manager, user_id):
     await show_humidity_settings(query, preference_manager, user_id)
 
 async def handle_sensitivity_setting(query, preference_manager, user_id):
-    """Handle sensitivity setting adjustments."""
+    """Apply sensitivity setting changes."""
     preference = preference_manager.get_user_preference(user_id)
     
     if query.data == "sensitivity_temp_menu":
@@ -374,7 +361,7 @@ async def handle_sensitivity_setting(query, preference_manager, user_id):
         await show_sensitivity_settings(query, preference_manager, user_id)
 
 async def show_sensitivity_temp_menu(query, preference_manager, user_id):
-    """Show temperature sensitivity menu."""
+    """Display temperature sensitivity options."""
     preference = preference_manager.get_user_preference(user_id)
     
     text = f"*Temperature Sensitivity*\n\n"
@@ -392,7 +379,7 @@ async def show_sensitivity_temp_menu(query, preference_manager, user_id):
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def show_sensitivity_co2_menu(query, preference_manager, user_id):
-    """Show CO2 sensitivity menu."""
+    """Display CO2 sensitivity options."""
     preference = preference_manager.get_user_preference(user_id)
     
     text = f"*Air Quality Sensitivity*\n\n"
@@ -410,7 +397,7 @@ async def show_sensitivity_co2_menu(query, preference_manager, user_id):
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def show_sensitivity_humidity_menu(query, preference_manager, user_id):
-    """Show humidity sensitivity menu."""
+    """Display humidity sensitivity options."""
     preference = preference_manager.get_user_preference(user_id)
     
     text = f"*Humidity Sensitivity*\n\n"
@@ -428,7 +415,7 @@ async def show_sensitivity_humidity_menu(query, preference_manager, user_id):
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def settempcomfort_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set temperature comfort range via command."""
+    """Set temperature range command."""
     user = update.effective_user
     user_id = user.id
     user_auth = context.application.bot_data["user_auth"]
@@ -443,7 +430,6 @@ async def settempcomfort_command(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Preference system is not available.")
         return
     
-    # Parse arguments
     if len(context.args) != 2:
         await update.message.reply_text(
             "Usage: /settempcomfort [min] [max]\n"
@@ -464,7 +450,6 @@ async def settempcomfort_command(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("Temperature values must be between 15°C and 30°C.")
             return
         
-        # Update preferences
         preference_manager.set_user_preference(user_id, temp_min=temp_min, temp_max=temp_max)
         
         await update.message.reply_text(
@@ -476,7 +461,7 @@ async def settempcomfort_command(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Please enter valid numbers for temperature values.")
 
 async def setco2comfort_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set CO2 comfort threshold via command."""
+    """Set CO2 threshold command."""
     user = update.effective_user
     user_id = user.id
     user_auth = context.application.bot_data["user_auth"]
@@ -491,7 +476,6 @@ async def setco2comfort_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Preference system is not available.")
         return
     
-    # Parse arguments
     if len(context.args) != 1:
         await update.message.reply_text(
             "Usage: /setco2comfort [threshold]\n"
@@ -502,12 +486,10 @@ async def setco2comfort_command(update: Update, context: ContextTypes.DEFAULT_TY
     try:
         co2_threshold = int(context.args[0])
         
-        # Validate values
         if co2_threshold < 400 or co2_threshold > 1500:
             await update.message.reply_text("CO₂ threshold must be between 400 and 1500 ppm.")
             return
         
-        # Update preferences
         preference_manager.set_user_preference(user_id, co2_threshold=co2_threshold)
         
         await update.message.reply_text(
@@ -519,7 +501,7 @@ async def setco2comfort_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Please enter a valid number for CO₂ threshold.")
 
 def setup_preference_handlers(app):
-    """Register preference handlers."""
+    """Register handlers."""
     app.add_handler(CommandHandler("myprefs", myprefs_command))
     app.add_handler(CommandHandler("settempcomfort", settempcomfort_command))
     app.add_handler(CommandHandler("setco2comfort", setco2comfort_command))
