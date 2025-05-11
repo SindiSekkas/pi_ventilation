@@ -40,7 +40,11 @@ from presence.occupancy_history_manager import OccupancyHistoryManager
 from predictive.occupancy_pattern_analyzer import OccupancyPatternAnalyzer
 
 def run_bot(pico_manager=None, controller=None, data_manager=None, sleep_analyzer=None, preference_manager=None, occupancy_analyzer=None, device_manager=None, telegram_ping_tasks_queue=None):
-    """Run the Telegram bot in a separate process."""
+    """
+    Run the Telegram bot in a separate process.
+    
+    Passes all system components to the bot to enable control and monitoring.
+    """
     try:
         # Import bot main
         from bot.main import main as bot_main
@@ -52,7 +56,17 @@ def run_bot(pico_manager=None, controller=None, data_manager=None, sleep_analyze
         # Don't exit, just log the error and continue
 
 def main():
-    """Main application entry point."""
+    """
+    Main application entry point.
+    
+    Initializes and orchestrates all system components, including:
+    - Sensors and data collection
+    - Presence detection
+    - Ventilation control
+    - Adaptive sleep pattern analysis
+    - User preferences
+    - Telegram bot interface
+    """
     try:
         logger.info("Starting ventilation system")
         
@@ -79,7 +93,7 @@ def main():
             logger.error("Failed to start sensor reader")
             return 1
 
-        # Create telegram_ping_tasks_queue
+        # Create telegram_ping_tasks_queue for device presence verification
         telegram_ping_tasks_queue = queue.Queue()
 
         # Initialize device manager with Telegram ping queue
@@ -109,7 +123,7 @@ def main():
         else:
             logger.error("Failed to start presence detection system")
 
-        # Initialize Markov controller WITH preference_manager and occupancy_analyzer
+        # Initialize Markov controller with preference_manager and occupancy_analyzer
         markov_controller = MarkovController(
             data_manager=data_manager,
             pico_manager=pico_manager,
@@ -143,7 +157,7 @@ def main():
                 target=run_bot, 
                 args=(pico_manager, markov_controller, data_manager, sleep_analyzer, preference_manager, occupancy_pattern_analyzer, device_manager, telegram_ping_tasks_queue),
                 daemon=True,
-                name="TelegramBot"  # Add thread name for easier debugging
+                name="TelegramBot"  # Thread name for easier debugging
             )
             bot_thread.start()
             logger.info("Telegram bot started in thread")
@@ -175,6 +189,7 @@ def main():
                     logger.error("Bot thread has died!")
                 logger.debug(f"Thread status - Bot: {'Alive' if bot_thread and bot_thread.is_alive() else 'Dead'}")
         
+        # Start thread monitoring
         monitor_thread = threading.Thread(target=monitor_threads, daemon=True, name="ThreadMonitor")
         monitor_thread.start()
         
@@ -187,7 +202,7 @@ def main():
         except KeyboardInterrupt:
             logger.info("Shutting down ventilation system")
             
-            # Stop controllers
+            # Stop controllers gracefully
             markov_controller.stop()
             presence_controller.stop()
             sleep_analyzer.stop()
