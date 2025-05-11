@@ -159,7 +159,57 @@ class DeviceManager:
                 device.status = "active"
                 
             else:
-                # Try checking ARP table for all devices
+                # For phones with Telegram-ping capability, prioritize Telegram-ping
+                if (device.device_type == DeviceType.PHONE.value and 
+                    device.count_for_presence and 
+                    device.telegram_user_id is not None and 
+                    device.last_ip):
+                    
+                    # Check if cooldown has passed
+                    if device.last_telegram_ping_request_time is not None:
+                        last_ping_time = datetime.fromisoformat(device.last_telegram_ping_request_time)
+                        time_since_ping = (now - last_ping_time).total_seconds() / 60  # minutes
+                        
+                        if time_since_ping < self.TELEGRAM_PING_COOLDOWN_MINUTES:
+                            logger.debug(f"Telegram ping cooldown not expired for {device.name} ({time_since_ping:.1f} < {self.TELEGRAM_PING_COOLDOWN_MINUTES} minutes)")
+                        else:
+                            # Queue Telegram ping and return without further checks
+                            if self.telegram_ping_queue is not None:
+                                ping_task = {
+                                    'mac': device.mac,
+                                    'telegram_user_id': device.telegram_user_id,
+                                    'ip_address': device.last_ip
+                                }
+                                try:
+                                    self.telegram_ping_queue.put(ping_task)
+                                    device.last_telegram_ping_request_time = now.isoformat()
+                                    device.is_pending_telegram_ping = True
+                                    self._save_devices()
+                                    logger.info(f"Queued Telegram ping for {device.name} (MAC: {device.mac})")
+                                    # Return immediately to wait for ping result
+                                    return False
+                                except Exception as e:
+                                    logger.error(f"Failed to queue Telegram ping: {e}")
+                    else:
+                        # First time pinging - queue and return
+                        if self.telegram_ping_queue is not None:
+                            ping_task = {
+                                'mac': device.mac,
+                                'telegram_user_id': device.telegram_user_id,
+                                'ip_address': device.last_ip
+                            }
+                            try:
+                                self.telegram_ping_queue.put(ping_task)
+                                device.last_telegram_ping_request_time = now.isoformat()
+                                device.is_pending_telegram_ping = True
+                                self._save_devices()
+                                logger.info(f"Queued first Telegram ping for {device.name} (MAC: {device.mac})")
+                                # Return immediately to wait for ping result
+                                return False
+                            except Exception as e:
+                                logger.error(f"Failed to queue Telegram ping: {e}")
+                
+                # For devices without Telegram ping or during cooldown, try ARP table check
                 if device.last_ip:
                     # Try ARP table check first
                     is_present = self.check_arp_table(mac)
@@ -178,57 +228,6 @@ class DeviceManager:
                         if status_changed:
                             self._save_devices()
                         return status_changed
-                
-                # Check for Telegram ping requirements
-                if (device.device_type == DeviceType.PHONE.value and 
-                    device.count_for_presence and 
-                    device.telegram_user_id is not None and 
-                    device.last_ip and 
-                    not is_online):
-                    
-                    # Check if cooldown has passed
-                    if device.last_telegram_ping_request_time is not None:
-                        last_ping_time = datetime.fromisoformat(device.last_telegram_ping_request_time)
-                        time_since_ping = (now - last_ping_time).total_seconds() / 60  # minutes
-                        
-                        if time_since_ping < self.TELEGRAM_PING_COOLDOWN_MINUTES:
-                            logger.debug(f"Telegram ping cooldown not expired for {device.name} ({time_since_ping:.1f} < {self.TELEGRAM_PING_COOLDOWN_MINUTES} minutes)")
-                        else:
-                            # Queue Telegram ping
-                            if self.telegram_ping_queue is not None:
-                                ping_task = {
-                                    'mac': device.mac,
-                                    'telegram_user_id': device.telegram_user_id,
-                                    'ip_address': device.last_ip
-                                }
-                                try:
-                                    self.telegram_ping_queue.put(ping_task)
-                                    device.last_telegram_ping_request_time = now.isoformat()
-                                    device.is_pending_telegram_ping = True
-                                    self._save_devices()
-                                    logger.info(f"Queued Telegram ping for {device.name} (MAC: {device.mac})")
-                                    # Don't update status yet - wait for ping result
-                                    return False
-                                except Exception as e:
-                                    logger.error(f"Failed to queue Telegram ping: {e}")
-                    else:
-                        # First time pinging
-                        if self.telegram_ping_queue is not None:
-                            ping_task = {
-                                'mac': device.mac,
-                                'telegram_user_id': device.telegram_user_id,
-                                'ip_address': device.last_ip
-                            }
-                            try:
-                                self.telegram_ping_queue.put(ping_task)
-                                device.last_telegram_ping_request_time = now.isoformat()
-                                device.is_pending_telegram_ping = True
-                                self._save_devices()
-                                logger.info(f"Queued first Telegram ping for {device.name} (MAC: {device.mac})")
-                                # Don't update status yet - wait for ping result
-                                return False
-                            except Exception as e:
-                                logger.error(f"Failed to queue Telegram ping: {e}")
                 
                 # Additional checks only for important devices (phones)
                 if (device.device_type == DeviceType.PHONE.value and 
