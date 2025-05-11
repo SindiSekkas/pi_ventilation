@@ -4,6 +4,7 @@ import os
 import json
 import pandas as pd
 import logging
+import csv
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, Tuple
 from collections import defaultdict
@@ -75,7 +76,7 @@ class OccupancyPatternAnalyzer:
             logger.error(f"Error saving probabilities: {e}")
     
     def _load_and_process_history(self):
-        """Load history from CSV and calculate empty probabilities."""
+        """Load history from CSV and calculate empty probabilities with feedback priority."""
         try:
             # Read the CSV file
             if not os.path.exists(self.history_file):
@@ -92,29 +93,76 @@ class OccupancyPatternAnalyzer:
             df['day_of_week'] = df['timestamp'].dt.dayofweek  # 0=Monday, 6=Sunday
             df['hour'] = df['timestamp'].dt.hour
             
-            # Calculate probabilities for each (day_of_week, hour) combination
-            self.empty_probabilities = {}
-            self.hourly_patterns = {}
+            # Ensure people_count column exists (for backward compatibility)
+            if 'people_count' not in df.columns:
+                df['people_count'] = 0
             
-            # Group by day_of_week and hour
-            grouped = df.groupby(['day_of_week', 'hour'])
+            # Initialize temporary patterns storage
+            temp_hourly_patterns = {}
+            temp_empty_probabilities = {}
             
-            for (day, hour), group in grouped:
-                # Count empty vs occupied states
-                empty_count = len(group[group['status'] == 'EMPTY'])
-                total_count = len(group)
+            # First pass: Process feedback records with high priority
+            feedback_rows = df[df['status'].str.startswith('USER_CONFIRMED_', na=False)]
+            grouped_feedback = feedback_rows.groupby(['day_of_week', 'hour'])
+            
+            feedback_weight = 10  # Weight for feedback records
+            
+            for (day, hour), group in grouped_feedback:
+                key = (day, hour)
                 
-                # Store pattern data
-                self.hourly_patterns[(day, hour)] = {
+                # Count feedback types
+                confirmed_home = len(group[group['status'] == 'USER_CONFIRMED_HOME'])
+                confirmed_away = len(group[group['status'] == 'USER_CONFIRMED_AWAY'])
+                
+                # Initialize with feedback data
+                total_count = (confirmed_home + confirmed_away) * feedback_weight
+                empty_count = confirmed_away * feedback_weight
+                
+                temp_hourly_patterns[key] = {
                     'total': total_count,
                     'empty': empty_count
                 }
                 
-                # Calculate probability of being empty
+                # Calculate initial probability from feedback
                 probability = empty_count / total_count if total_count > 0 else 0.5
-                self.empty_probabilities[(day, hour)] = probability
+                temp_empty_probabilities[key] = probability
                 
-                logger.debug(f"Day {day}, Hour {hour}: P(EMPTY) = {probability:.3f} ({empty_count}/{total_count})")
+                logger.debug(f"Feedback for Day {day}, Hour {hour}: P(EMPTY) = {probability:.3f} "
+                            f"(confirmed_home={confirmed_home}, confirmed_away={confirmed_away})")
+            
+            # Second pass: Process all regular occupancy records
+            regular_rows = df[(df['status'] == 'EMPTY') | (df['status'] == 'OCCUPIED')]
+            grouped_regular = regular_rows.groupby(['day_of_week', 'hour'])
+            
+            for (day, hour), group in grouped_regular:
+                key = (day, hour)
+                
+                # Count empty vs occupied states
+                empty_count = len(group[group['status'] == 'EMPTY'])
+                total_count = len(group)
+                
+                # If we have feedback for this slot, add to existing counts
+                if key in temp_hourly_patterns:
+                    temp_hourly_patterns[key]['total'] += total_count
+                    temp_hourly_patterns[key]['empty'] += empty_count
+                else:
+                    # No feedback, initialize with regular data
+                    temp_hourly_patterns[key] = {
+                        'total': total_count,
+                        'empty': empty_count
+                    }
+                
+                # Recalculate probability
+                pattern = temp_hourly_patterns[key]
+                probability = pattern['empty'] / pattern['total'] if pattern['total'] > 0 else 0.5
+                temp_empty_probabilities[key] = probability
+                
+                logger.debug(f"Combined data for Day {day}, Hour {hour}: P(EMPTY) = {probability:.3f} "
+                            f"(empty={pattern['empty']}/{pattern['total']})")
+            
+            # Update class attributes with new data
+            self.hourly_patterns = temp_hourly_patterns
+            self.empty_probabilities = temp_empty_probabilities
             
             self.last_load_time = datetime.now()
             self._save_probabilities()
@@ -292,6 +340,7 @@ class OccupancyPatternAnalyzer:
     def record_user_feedback(self, feedback_timestamp: datetime, actual_status: str):
         """
         Record user feedback about occupancy status to improve predictions.
+        Saves feedback to both memory and CSV for persistence.
         
         Args:
             feedback_timestamp: Timestamp of the feedback
@@ -337,6 +386,43 @@ class OccupancyPatternAnalyzer:
         
         # Save the updated probabilities
         self._save_probabilities()
+        
+        # Save feedback to CSV for persistence
+        self._save_feedback_to_csv(feedback_timestamp, actual_status)
+    
+    def _save_feedback_to_csv(self, feedback_timestamp: datetime, actual_status: str):
+        """
+        Save user feedback to CSV file for long-term persistence.
+        
+        Args:
+            feedback_timestamp: Timestamp of the feedback
+            actual_status: "USER_CONFIRMED_HOME" or "USER_CONFIRMED_AWAY"
+        """
+        try:
+            # Create feedback entry
+            feedback_row = {
+                'timestamp': feedback_timestamp.isoformat(),
+                'status': actual_status,
+                'people_count': 1 if actual_status == "USER_CONFIRMED_HOME" else 0
+            }
+            
+            # Check if file exists to determine if we need headers
+            file_exists = os.path.exists(self.history_file)
+            
+            # Append feedback to CSV
+            with open(self.history_file, 'a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['timestamp', 'status', 'people_count'])
+                
+                # Write header if file doesn't exist
+                if not file_exists:
+                    writer.writeheader()
+                
+                writer.writerow(feedback_row)
+            
+            logger.debug(f"Saved feedback to CSV: {feedback_row}")
+            
+        except Exception as e:
+            logger.error(f"Error saving feedback to CSV: {e}")
     
     def get_next_expected_return_time(self, current_datetime: datetime) -> Optional[datetime]:
         """
