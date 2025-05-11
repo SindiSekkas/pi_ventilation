@@ -124,73 +124,52 @@ class DeviceManager:
     def update_device_status(self, mac, is_online, current_time=None):
         """
         Update device status based on network scan with enhanced detection.
-        
-        Args:
-            mac: MAC address
-            is_online: Whether device is online
-            current_time: Current time (default: now)
-        
-        Returns:
-            bool: Whether status changed
+        Optimized to minimize lock time.
         """
+        mac_lower = mac.lower()
+        now = current_time or datetime.now()
+        
+        # First, get device reference with minimal lock time
         with self._lock:
-            mac = mac.lower()
-            if mac not in self.devices:
+            if mac_lower not in self.devices:
                 return False
-                
-            device = self.devices[mac]
-            status_changed = False
-            now = current_time or datetime.now()
+            device = self.devices[mac_lower]
+        
+        # Now work with device outside the lock
+        status_changed = False
+        
+        if is_online:
+            # Find IP address for this MAC from recent scan
+            for device_info in self._last_scan_results:
+                if len(device_info) >= 2 and device_info[0].lower() == mac_lower:
+                    device.last_ip = device_info[1]  # Store IP address
+                    break
             
-            if is_online:
-                # Find IP address for this MAC from recent scan
-                for device_info in self._last_scan_results:
-                    if len(device_info) >= 2 and device_info[0].lower() == mac.lower():
-                        device.last_ip = device_info[1]  # Store IP address
-                        break
+            # Device is online - mark active and reset offline counter
+            if device.status != "active":
+                status_changed = True
+                logger.info(f"Device {mac} ({device.name}) is now active")
+            
+            # These operations don't need locks
+            device.record_connection()
+            device.offline_count = 0
+            device.status = "active"
+            
+        else:
+            # For phones with Telegram-ping capability, prioritize Telegram-ping
+            if (device.device_type == DeviceType.PHONE.value and 
+                device.count_for_presence and 
+                device.telegram_user_id is not None):
                 
-                # Device is online - mark active and reset offline counter
-                if device.status != "active":
-                    status_changed = True
-                    logger.info(f"Device {mac} ({device.name}) is now active")
-                
-                device.record_connection()
-                device.offline_count = 0
-                device.status = "active"
-                
-            else:
-                # For phones with Telegram-ping capability, prioritize Telegram-ping
-                if (device.device_type == DeviceType.PHONE.value and 
-                    device.count_for_presence and 
-                    device.telegram_user_id is not None):
+                # Check if cooldown has passed
+                if device.last_telegram_ping_request_time is not None:
+                    last_ping_time = datetime.fromisoformat(device.last_telegram_ping_request_time)
+                    time_since_ping = (now - last_ping_time).total_seconds() / 60  # minutes
                     
-                    # Check if cooldown has passed
-                    if device.last_telegram_ping_request_time is not None:
-                        last_ping_time = datetime.fromisoformat(device.last_telegram_ping_request_time)
-                        time_since_ping = (now - last_ping_time).total_seconds() / 60  # minutes
-                        
-                        if time_since_ping < self.TELEGRAM_PING_COOLDOWN_MINUTES:
-                            logger.debug(f"Telegram ping cooldown not expired for {device.name} ({time_since_ping:.1f} < {self.TELEGRAM_PING_COOLDOWN_MINUTES} minutes)")
-                        else:
-                            # Queue Telegram ping and return without further checks
-                            if self.telegram_ping_queue is not None:
-                                ping_task = {
-                                    'mac': device.mac,
-                                    'telegram_user_id': device.telegram_user_id,
-                                    'ip_address': device.last_ip or None
-                                }
-                                try:
-                                    self.telegram_ping_queue.put(ping_task)
-                                    device.last_telegram_ping_request_time = now.isoformat()
-                                    device.is_pending_telegram_ping = True
-                                    self._save_devices()
-                                    logger.info(f"Queued Telegram ping for {device.name} (MAC: {device.mac})")
-                                    # Return immediately to wait for ping result
-                                    return False
-                                except Exception as e:
-                                    logger.error(f"Failed to queue Telegram ping: {e}")
+                    if time_since_ping < self.TELEGRAM_PING_COOLDOWN_MINUTES:
+                        logger.debug(f"Telegram ping cooldown not expired for {device.name} ({time_since_ping:.1f} < {self.TELEGRAM_PING_COOLDOWN_MINUTES} minutes)")
                     else:
-                        # First time pinging - queue and return
+                        # Queue Telegram ping and return without further checks
                         if self.telegram_ping_queue is not None:
                             ping_task = {
                                 'mac': device.mac,
@@ -201,29 +180,49 @@ class DeviceManager:
                                 self.telegram_ping_queue.put(ping_task)
                                 device.last_telegram_ping_request_time = now.isoformat()
                                 device.is_pending_telegram_ping = True
-                                self._save_devices()
-                                logger.info(f"Queued first Telegram ping for {device.name} (MAC: {device.mac})")
+                                # Save devices in background
+                                threading.Thread(target=self._save_devices, daemon=True).start()
+                                logger.info(f"Queued Telegram ping for {device.name} (MAC: {device.mac})")
                                 # Return immediately to wait for ping result
                                 return False
                             except Exception as e:
                                 logger.error(f"Failed to queue Telegram ping: {e}")
-                
-                # Device is offline - increment counter
-                device.offline_count += 1
+                else:
+                    # First time pinging - queue and return
+                    if self.telegram_ping_queue is not None:
+                        ping_task = {
+                            'mac': device.mac,
+                            'telegram_user_id': device.telegram_user_id,
+                            'ip_address': device.last_ip or None
+                        }
+                        try:
+                            self.telegram_ping_queue.put(ping_task)
+                            device.last_telegram_ping_request_time = now.isoformat()
+                            device.is_pending_telegram_ping = True
+                            # Save devices in background
+                            threading.Thread(target=self._save_devices, daemon=True).start()
+                            logger.info(f"Queued first Telegram ping for {device.name} (MAC: {device.mac})")
+                            # Return immediately to wait for ping result
+                            return False
+                        except Exception as e:
+                            logger.error(f"Failed to queue Telegram ping: {e}")
             
-            # Check if we should mark device as inactive
-            offline_threshold = self._get_offline_threshold(device, now)
-            
-            if device.offline_count > offline_threshold and device.status == "active":
-                # Mark device as inactive
-                device.status = "inactive"
-                device.record_disconnection()
-                status_changed = True
-                logger.info(f"Device {mac} ({device.name}) is now inactive after {device.offline_count} missed scans")
+            # Device is offline - increment counter
+            device.offline_count += 1
         
-        # Save on status change
+        # Check if we should mark device as inactive
+        offline_threshold = self._get_offline_threshold(device, now)
+        
+        if device.offline_count > offline_threshold and device.status == "active":
+            # Mark device as inactive
+            device.status = "inactive"
+            device.record_disconnection()
+            status_changed = True
+            logger.info(f"Device {mac} ({device.name}) is now inactive after {device.offline_count} missed scans")
+        
+        # Save on status change in background
         if status_changed:
-            self._save_devices()
+            threading.Thread(target=self._save_devices, daemon=True).start()
             
             # Update typical active hours on status change
             if device.device_type == DeviceType.PHONE.value:

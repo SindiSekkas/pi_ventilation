@@ -1,5 +1,4 @@
 """Main entry point for the ventilation system."""
-# main.py
 import os
 import sys
 import time
@@ -96,17 +95,17 @@ def main():
         occupancy_history_file = os.path.join(DATA_DIR, "occupancy_history", "occupancy_history.csv")
         occupancy_pattern_analyzer = OccupancyPatternAnalyzer(occupancy_history_file)
 
-        # Initialize presence controller
+        # Initialize presence controller with longer scan interval to prevent blocking
         presence_controller = PresenceController(
             device_manager=device_manager,
             data_manager=data_manager,
             occupancy_history_manager=occupancy_history_manager,
-            scan_interval=300  # 5 minutes between scans
+            scan_interval=600  # Changed from 300 to 600 (10 minutes) to prevent frequent scans
         )
 
         # Start presence controller
         if presence_controller.start():
-            logger.info("Presence detection system started")
+            logger.info("Presence detection system started with 10-minute intervals")
         else:
             logger.error("Failed to start presence detection system")
 
@@ -143,10 +142,11 @@ def main():
             bot_thread = threading.Thread(
                 target=run_bot, 
                 args=(pico_manager, markov_controller, data_manager, sleep_analyzer, preference_manager, occupancy_pattern_analyzer, device_manager, telegram_ping_tasks_queue),
-                daemon=True
+                daemon=True,
+                name="TelegramBot"  # Add thread name for easier debugging
             )
             bot_thread.start()
-            logger.info("Telegram bot started")
+            logger.info("Telegram bot started in thread")
         else:
             logger.warning("BOT_TOKEN not configured, bot will not start")
         
@@ -163,9 +163,20 @@ def main():
                 time.sleep(21600)
         
         # Start periodic pattern update thread
-        pattern_thread = threading.Thread(target=periodic_pattern_update, daemon=True)
+        pattern_thread = threading.Thread(target=periodic_pattern_update, daemon=True, name="PatternUpdater")
         pattern_thread.start()
         logger.info("Started periodic pattern update task")
+        
+        # Monitor thread health
+        def monitor_threads():
+            while True:
+                time.sleep(60)  # Check every minute
+                if bot_thread and not bot_thread.is_alive():
+                    logger.error("Bot thread has died!")
+                logger.debug(f"Thread status - Bot: {'Alive' if bot_thread and bot_thread.is_alive() else 'Dead'}")
+        
+        monitor_thread = threading.Thread(target=monitor_threads, daemon=True, name="ThreadMonitor")
+        monitor_thread.start()
         
         logger.info("Ventilation system started successfully")
         

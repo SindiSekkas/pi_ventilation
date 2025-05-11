@@ -4,6 +4,7 @@ import re
 import logging
 from datetime import datetime
 from typing import Optional
+import asyncio # Added import
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,39 @@ def scan_network(target_ip: Optional[str] = None):
         logger.debug(f"FOUND DEVICE: MAC={mac}, IP={ip}, Vendor={vendor}")
     
     return device_list
+
+
+async def scan_network_async(target_ip: Optional[str] = None):
+    """Asynchronous network scan to prevent blocking."""
+    devices = {}
+    
+    try:
+        if target_ip:
+            cmd = ["sudo", "arp-scan", target_ip]
+        else:
+            cmd = ["sudo", "arp-scan", "--localnet"]
+        
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+        output = stdout.decode()
+        
+        for line in output.splitlines():
+            match = re.search(r'(\d+\.\d+\.\d+\.\d+)\s+([0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2})\s+(.+?)(?:\s+\(DUP: \d+\))?$', line)
+            if match:
+                ip = match.group(1)
+                mac = match.group(2).lower()
+                vendor = match.group(3).strip()
+                devices[mac] = (mac, ip, vendor)
+    except Exception as e:
+        logger.error(f"Error in async scan: {e}")
+    
+    return list(devices.values())
+
 
 def fallback_scan():
     """Fallback method: read ARP table directly."""

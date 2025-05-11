@@ -40,7 +40,7 @@ class PresenceController:
             return False
             
         self.running = True
-        self.thread = threading.Thread(target=self._presence_loop, daemon=True)
+        self.thread = threading.Thread(target=self._presence_loop, daemon=True, name="PresenceController")
         self.thread.start()
         logger.info("Started presence detection")
         return True
@@ -54,19 +54,21 @@ class PresenceController:
         """Main loop for presence detection."""
         while self.running:
             try:
-                # Scan network
+                # Run scan in current thread - don't block other parts of the system
+                logger.debug("Starting network scan...")
                 online_devices = scan_network()
+                logger.debug(f"Network scan completed, found {len(online_devices)} devices")
                 
-                # Process discovered devices
+                # Process discovered devices - don't log every device to reduce spam
                 self._process_discovered_devices(online_devices)
                 
-                # Update status of all devices
-                online_macs = [device[0] for device in online_devices]
-                for mac in self.device_manager.devices:
+                # Update status of all devices - batch operations
+                online_macs = [device[0].lower() for device in online_devices]
+                devices_copy = dict(self.device_manager.devices)  # Create copy to avoid lock conflicts
+                
+                for mac, device in devices_copy.items():
                     is_online = mac in online_macs
                     self.device_manager.update_device_status(mac, is_online)
-                    device = self.device_manager.devices[mac]
-                    logger.info(f"Device {device.name} ({mac}): status={device.status}, offline_count={device.offline_count}")
                 
                 # Calculate presence and update room data
                 people_count = self.device_manager.calculate_people_present()
@@ -90,12 +92,17 @@ class PresenceController:
                     
                     self.last_occupancy = people_count
                     logger.info(f"Updated occupancy: {people_count} people present")
+                else:
+                    logger.debug(f"Occupancy unchanged: {people_count} people")
                 
             except Exception as e:
                 logger.error(f"Error in presence detection: {e}")
                 
-            # Sleep until next scan
-            time.sleep(self.scan_interval)
+            # Sleep until next scan - use smaller sleeps to be more responsive to stop
+            elapsed = 0
+            while elapsed < self.scan_interval and self.running:
+                time.sleep(min(1, self.scan_interval - elapsed))
+                elapsed += 1
             
     def _process_discovered_devices(self, devices):
         """
