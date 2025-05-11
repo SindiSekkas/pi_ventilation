@@ -65,6 +65,8 @@ class PresenceController:
                 for mac in self.device_manager.devices:
                     is_online = mac in online_macs
                     self.device_manager.update_device_status(mac, is_online)
+                    device = self.device_manager.devices[mac]
+                    logger.info(f"Device {device.name} ({mac}): status={device.status}, offline_count={device.offline_count}")
                 
                 # Calculate presence and update room data
                 people_count = self.device_manager.calculate_people_present()

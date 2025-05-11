@@ -9,12 +9,12 @@ logger = logging.getLogger(__name__)
 
 def scan_network(target_ip: Optional[str] = None):
     """
-    Scan local network for devices using BOTH arp-scan AND ARP table.
-    Returns combined list of all found devices.
+    Scan local network for devices using ONLY arp-scan.
+    Returns list of all found devices.
     """
     devices = {}  # Dictionary to prevent duplicates by MAC address
     
-    # PART 1: ARP-SCAN
+    # ARP-SCAN ONLY
     try:
         if target_ip:
             logger.info(f"Running targeted arp-scan for {target_ip}")
@@ -43,55 +43,6 @@ def scan_network(target_ip: Optional[str] = None):
         logger.info(f"ARP-SCAN found {len(devices)} devices")
     except Exception as e:
         logger.error(f"Error in arp-scan: {e}")
-    
-    # Skip ARP table check for targeted scans
-    if target_ip:
-        device_list = list(devices.values())
-        logger.info(f"Targeted scan found {len(device_list)} devices")
-        return device_list
-    
-    # PART 2: READ /proc/net/arp FILE
-    try:
-        logger.info("Reading /proc/net/arp file")
-        with open('/proc/net/arp', 'r') as f:
-            lines = f.readlines()[1:]  # Skip header
-            
-        for line in lines:
-            parts = line.strip().split()
-            if len(parts) >= 4 and parts[3] != "00:00:00:00:00:00":
-                ip = parts[0]
-                mac = parts[3].lower()
-                
-                # Only add if not already found
-                if mac not in devices:
-                    logger.info(f"Found additional device in ARP table: {mac} ({ip})")
-                    devices[mac] = (mac, ip, "Unknown")
-    except Exception as e:
-        logger.error(f"Error reading /proc/net/arp: {e}")
-    
-    # PART 3: RUN ARP COMMAND
-    try:
-        logger.info("Running 'arp -a' command")
-        result = subprocess.run(
-            ["arp", "-a"], 
-            capture_output=True, text=True,
-            timeout=5
-        )
-        
-        # Parse output to find MAC addresses
-        for line in result.stdout.splitlines():
-            # Try to extract IP and MAC
-            match = re.search(r'\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-fA-F:]{17})', line)
-            if match:
-                ip = match.group(1)
-                mac = match.group(2).lower()
-                
-                # Only add if not already found
-                if mac not in devices:
-                    logger.info(f"Found additional device via 'arp -a': {mac} ({ip})")
-                    devices[mac] = (mac, ip, "Unknown")
-    except Exception as e:
-        logger.error(f"Error running arp command: {e}")
     
     # Convert dictionary to list for return
     device_list = list(devices.values())
@@ -210,12 +161,6 @@ def check_device_presence(mac_address, ip_address=None, methods=None):
     """
     methods = methods or ['arp_scan', 'arp_table', 'ping']
     mac_address = mac_address.lower()
-    
-    # Method 1: Check ARP table
-    if 'arp_table' in methods:
-        arp_present = check_arp_table(mac_address)
-        if arp_present:
-            return (True, 'arp_table', None)
     
     # Method 2: Check with directed ARP scan if IP is known
     if 'arp_scan' in methods and ip_address:

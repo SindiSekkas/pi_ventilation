@@ -209,65 +209,8 @@ class DeviceManager:
                             except Exception as e:
                                 logger.error(f"Failed to queue Telegram ping: {e}")
                 
-                # For devices without Telegram ping or during cooldown, try ARP table check
-                if device.last_ip:
-                    # Try ARP table check first
-                    is_present = self.check_arp_table(mac)
-                    
-                    if is_present:
-                        logger.info(f"Device {mac} ({device.name}) found in ARP table")
-                        # Mark as online and update timestamp
-                        device.record_connection()
-                        device.offline_count = 0
-                        
-                        if device.status != "active":
-                            device.status = "active"
-                            status_changed = True
-                        
-                        # Return early - device is actually present
-                        if status_changed:
-                            self._save_devices()
-                        return status_changed
-                
-                # Additional checks only for important devices (phones)
-                if (device.device_type == DeviceType.PHONE.value and 
-                    device.count_for_presence and device.last_ip):
-                    
-                    # Try additional methods to detect the device (ping)
-                    if ping_device(device.last_ip):
-                        logger.info(f"Device {mac} ({device.name}) responded to ping")
-                        # Mark as online and update timestamp
-                        device.record_connection()
-                        device.offline_count = 0
-                        
-                        if device.status != "active":
-                            device.status = "active"
-                            status_changed = True
-                        
-                        # Return early - device is actually present
-                        if status_changed:
-                            self._save_devices()
-                        return status_changed
-            
                 # Device is offline - increment counter
                 device.offline_count += 1
-                
-                # Try to wake phones that support WoL
-                if (device.device_type == DeviceType.PHONE.value and 
-                    device.count_for_presence and 
-                    device.supports_wol and
-                    device.offline_count >= 2):  # Only try after missing 2 scans
-                    
-                    logger.debug(f"Attempting to wake device {mac} ({device.name})")
-                    wake_success = self.try_wake_device(mac)
-                    
-                    if wake_success:
-                        # If wake successful, mark as online and reset offline counter
-                        device.status = "active"
-                        device.offline_count = 0
-                        device.record_connection()
-                        logger.info(f"Successfully woken device {mac} ({device.name})")
-                        status_changed = True
             
             # Check if we should mark device as inactive
             offline_threshold = self._get_offline_threshold(device, now)
@@ -606,6 +549,8 @@ class DeviceManager:
                 is_active = device.status == "active"
                 is_probable = self.is_probably_present(device, current_time)
                 logger.debug(f"Device {device.name}: is_active={is_active}, is_probable={is_probable}")
+                if device.device_type == DeviceType.PHONE.value and device.count_for_presence:
+                    logger.info(f"DEBUG PHONE {device.name}: status={device.status}, offline_count={device.offline_count}, last_seen={device.last_seen}")
 
                 if ((is_active or is_probable) and
                     device.count_for_presence and 

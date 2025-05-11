@@ -37,7 +37,7 @@ OCCUPANCY_HISTORY_FILE = os.path.join(OCCUPANCY_HISTORY_DIR, "occupancy_history.
 OCCUPANCY_PROBABILITIES_FILE = os.path.join(OCCUPANCY_HISTORY_DIR, "occupancy_probabilities.json")
 
 # Skip initialisation measurements
-SKIP_INITIALIZATION = True
+SKIP_INITIALIZATION = False
 INIT_MEASUREMENTS = 0 if SKIP_INITIALIZATION else 5
 
 # Bot configuration
