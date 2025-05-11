@@ -16,10 +16,10 @@ class PresenceController:
         Initialize the presence controller.
         
         Args:
-            device_manager: Device manager instance
-            data_manager: Data manager instance
-            occupancy_history_manager: OccupancyHistoryManager instance for logging changes
-            scan_interval: Interval between scans in seconds
+            device_manager: Registry of tracked network devices
+            data_manager: System data storage interface
+            occupancy_history_manager: Optional component for recording occupancy changes
+            scan_interval: Seconds between network scans
         """
         self.device_manager = device_manager
         self.data_manager = data_manager
@@ -106,10 +106,13 @@ class PresenceController:
             
     def _process_discovered_devices(self, devices):
         """
-        Process newly discovered devices.
+        Register and classify newly discovered network devices.
+        
+        Automatically categorizes devices and configures appropriate
+        presence detection settings based on device characteristics.
         
         Args:
-            devices: List of tuples (mac, ip, vendor) from network scan
+            devices: Device information from network scan [(mac, ip, vendor),...]
         """
         for device_info in devices:
             if len(device_info) == 3:
@@ -144,11 +147,14 @@ class PresenceController:
     
     def handle_device_notification(self, action, **kwargs):
         """
-        Handle device notifications from device manager.
+        Process device-related events from the device manager.
+        
+        Enables integration with notification systems and
+        provides special handling for high-confidence device detections.
         
         Args:
-            action: Type of notification
-            **kwargs: Details about the notification
+            action: Event type identifier
+            **kwargs: Event-specific parameters
         """
         if action == "new_device":
             # Here you can add callbacks for various notification systems

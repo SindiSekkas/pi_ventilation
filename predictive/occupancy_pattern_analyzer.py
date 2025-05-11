@@ -1,5 +1,7 @@
-# predictive/occupancy_pattern_analyzer.py
-"""Analyzer for occupancy patterns and predictions."""
+"""
+Occupancy pattern analyzer for smart ventilation system.
+Uses historical data to predict when spaces are likely to be occupied or empty.
+"""
 import os
 import json
 import pandas as pd
@@ -12,14 +14,20 @@ from collections import defaultdict
 logger = logging.getLogger(__name__)
 
 class OccupancyPatternAnalyzer:
-    """Analyzes occupancy patterns to predict empty/occupied states."""
+    """
+    Analyzes occupancy patterns and provides probability-based predictions.
+    
+    Processes historical occupancy data to build time-based probability models,
+    with special weighting for user-confirmed feedback. Enables smart ventilation
+    decisions based on predicted occupancy states.
+    """
     
     def __init__(self, occupancy_history_file: str):
         """
         Initialize the occupancy pattern analyzer.
         
         Args:
-            occupancy_history_file: Path to occupancy_history.csv file
+            occupancy_history_file: Path to CSV file containing occupancy history
         """
         self.history_file = occupancy_history_file
         self.probabilities_file = os.path.join(
@@ -36,7 +44,12 @@ class OccupancyPatternAnalyzer:
         self._load_probabilities()
     
     def _load_probabilities(self):
-        """Load saved probabilities from JSON file."""
+        """
+        Load previously calculated probabilities from JSON file.
+        
+        Restores the probability model from persistent storage to avoid
+        recalculating on each restart.
+        """
         if os.path.exists(self.probabilities_file):
             try:
                 with open(self.probabilities_file, 'r') as f:
@@ -55,7 +68,11 @@ class OccupancyPatternAnalyzer:
                 logger.error(f"Error loading probabilities: {e}")
     
     def _save_probabilities(self):
-        """Save calculated probabilities to JSON file."""
+        """
+        Persist probability model to JSON file.
+        
+        Converts tuple keys to string format for JSON serialization.
+        """
         try:
             # Convert tuple keys to strings for JSON serialization
             data = {
@@ -76,9 +93,14 @@ class OccupancyPatternAnalyzer:
             logger.error(f"Error saving probabilities: {e}")
     
     def _load_and_process_history(self):
-        """Load history from CSV and calculate empty probabilities with feedback priority."""
+        """
+        Process historical occupancy data to build probability model.
+        
+        Prioritizes user feedback over automatically detected states and applies
+        appropriate weighting to generate reliable probability estimates.
+        """
         try:
-            # Read the CSV file
+            # Check file existence
             if not os.path.exists(self.history_file):
                 logger.warning(f"History file does not exist: {self.history_file}")
                 return
@@ -88,24 +110,24 @@ class OccupancyPatternAnalyzer:
                 logger.warning("Empty history file")
                 return
             
-            # Convert timestamp to datetime
+            # Prepare data
             df['timestamp'] = pd.to_datetime(df['timestamp'])
             df['day_of_week'] = df['timestamp'].dt.dayofweek  # 0=Monday, 6=Sunday
             df['hour'] = df['timestamp'].dt.hour
             
-            # Ensure people_count column exists (for backward compatibility)
+            # Handle backward compatibility
             if 'people_count' not in df.columns:
                 df['people_count'] = 0
             
-            # Initialize temporary patterns storage
+            # Temporary storage
             temp_hourly_patterns = {}
             temp_empty_probabilities = {}
             
-            # First pass: Process feedback records with high priority
+            # Process user feedback with higher priority
             feedback_rows = df[df['status'].str.startswith('USER_CONFIRMED_', na=False)]
             grouped_feedback = feedback_rows.groupby(['day_of_week', 'hour'])
             
-            feedback_weight = 10  # Weight for feedback records
+            feedback_weight = 10  # User feedback is weighted higher for reliability
             
             for (day, hour), group in grouped_feedback:
                 key = (day, hour)
@@ -114,7 +136,7 @@ class OccupancyPatternAnalyzer:
                 confirmed_home = len(group[group['status'] == 'USER_CONFIRMED_HOME'])
                 confirmed_away = len(group[group['status'] == 'USER_CONFIRMED_AWAY'])
                 
-                # Initialize with feedback data
+                # Apply feedback weighting
                 total_count = (confirmed_home + confirmed_away) * feedback_weight
                 empty_count = confirmed_away * feedback_weight
                 
@@ -123,36 +145,34 @@ class OccupancyPatternAnalyzer:
                     'empty': empty_count
                 }
                 
-                # Calculate initial probability from feedback
+                # Initial probability calculation
                 probability = empty_count / total_count if total_count > 0 else 0.5
                 temp_empty_probabilities[key] = probability
                 
                 logger.debug(f"Feedback for Day {day}, Hour {hour}: P(EMPTY) = {probability:.3f} "
                             f"(confirmed_home={confirmed_home}, confirmed_away={confirmed_away})")
             
-            # Second pass: Process all regular occupancy records
+            # Process automatic detection data
             regular_rows = df[(df['status'] == 'EMPTY') | (df['status'] == 'OCCUPIED')]
             grouped_regular = regular_rows.groupby(['day_of_week', 'hour'])
             
             for (day, hour), group in grouped_regular:
                 key = (day, hour)
                 
-                # Count empty vs occupied states
                 empty_count = len(group[group['status'] == 'EMPTY'])
                 total_count = len(group)
                 
-                # If we have feedback for this slot, add to existing counts
+                # Combine with existing feedback data if available
                 if key in temp_hourly_patterns:
                     temp_hourly_patterns[key]['total'] += total_count
                     temp_hourly_patterns[key]['empty'] += empty_count
                 else:
-                    # No feedback, initialize with regular data
                     temp_hourly_patterns[key] = {
                         'total': total_count,
                         'empty': empty_count
                     }
                 
-                # Recalculate probability
+                # Calculate final probability
                 pattern = temp_hourly_patterns[key]
                 probability = pattern['empty'] / pattern['total'] if pattern['total'] > 0 else 0.5
                 temp_empty_probabilities[key] = probability
@@ -160,7 +180,7 @@ class OccupancyPatternAnalyzer:
                 logger.debug(f"Combined data for Day {day}, Hour {hour}: P(EMPTY) = {probability:.3f} "
                             f"(empty={pattern['empty']}/{pattern['total']})")
             
-            # Update class attributes with new data
+            # Update class data
             self.hourly_patterns = temp_hourly_patterns
             self.empty_probabilities = temp_empty_probabilities
             
@@ -173,7 +193,7 @@ class OccupancyPatternAnalyzer:
     
     def get_predicted_empty_probability(self, target_datetime: datetime) -> float:
         """
-        Get predicted probability of being empty at target datetime.
+        Calculate probability that a space will be empty at a specific time.
         
         Args:
             target_datetime: The datetime to predict for
@@ -181,14 +201,14 @@ class OccupancyPatternAnalyzer:
         Returns:
             float: Probability of being empty (0.0-1.0)
         """
-        # Update probabilities only if really needed
+        # Reload data if necessary
         if self._should_reload_history():
             self._load_and_process_history()
         
         day_of_week = target_datetime.weekday()
         hour = target_datetime.hour
         
-        # Get probability from stored data
+        # Default to 0.5 (uncertain) if no data available
         probability = self.empty_probabilities.get((day_of_week, hour), 0.5)
         
         logger.debug(f"Predicted P(EMPTY) for {target_datetime}: {probability:.3f}")
@@ -196,60 +216,64 @@ class OccupancyPatternAnalyzer:
     
     def get_next_significant_event(self, current_datetime: datetime = None) -> Tuple[Optional[datetime], Optional[str], float]:
         """
-        Get the next significant occupancy event (arrival or departure).
+        Find the next expected arrival or departure event.
+        
+        Analyzes probability transitions to identify when occupancy state is
+        likely to change significantly.
         
         Args:
             current_datetime: Starting time for prediction (default: now)
             
         Returns:
-            Tuple[datetime, str, float]: (event_datetime, event_type, confidence)
-                - event_datetime: Time of next significant event
-                - event_type: "EXPECTED_ARRIVAL" or "EXPECTED_DEPARTURE"
-                - confidence: Confidence level (0.0-1.0)
+            Tuple containing:
+                - Time of next significant event (or None)
+                - Event type ("EXPECTED_ARRIVAL" or "EXPECTED_DEPARTURE")
+                - Confidence level (0.0-1.0)
         """
-        # Update probabilities if needed
         if self._should_reload_history():
             self._load_and_process_history()
         
         now = current_datetime or datetime.now()
-        
-        # Look ahead for 48 hours
         max_hours_ahead = 48
         
-        # Get current state and find when it changes
+        # Determine current state
         current_prob = self.get_predicted_empty_probability(now)
         current_state = "EMPTY" if current_prob > 0.5 else "OCCUPIED"
         
-        # Look for stable sequences
+        # Thresholds for reliable state detection
         stable_threshold_empty = 0.7
         stable_threshold_occupied = 0.3
         min_stable_hours = 2
         
+        # Scan future hours for state changes
         for hours_ahead in range(max_hours_ahead):
             check_time = now + timedelta(hours=hours_ahead)
             
-            # Get sequence of probabilities for next few hours
+            # Analyze stability of upcoming hours
             sequence_probs = []
             for hour_offset in range(min_stable_hours):
                 seq_time = check_time + timedelta(hours=hour_offset)
                 seq_prob = self.get_predicted_empty_probability(seq_time)
                 sequence_probs.append(seq_prob)
             
-            # Check if we have a stable sequence
+            # Evaluate sequence stability
             avg_prob = sum(sequence_probs) / len(sequence_probs)
             prob_variance = sum((p - avg_prob) ** 2 for p in sequence_probs) / len(sequence_probs)
             
-            if prob_variance < 0.1:  # Stable sequence
-                new_state = "EMPTY" if avg_prob > stable_threshold_empty else "OCCUPIED" if avg_prob < stable_threshold_occupied else None
+            # Low variance indicates stable state
+            if prob_variance < 0.1:
+                # Determine state from average probability
+                new_state = None
+                if avg_prob > stable_threshold_empty:
+                    new_state = "EMPTY"
+                elif avg_prob < stable_threshold_occupied:
+                    new_state = "OCCUPIED"
                 
+                # If state changes, we found an event
                 if new_state and new_state != current_state:
-                    # Found a significant change
                     event_type = "EXPECTED_ARRIVAL" if new_state == "OCCUPIED" else "EXPECTED_DEPARTURE"
                     
-                    # Calculate confidence based on:
-                    # 1. Length of stable sequence
-                    # 2. Average probability strength
-                    # 3. Historical data volume
+                    # Calculate confidence from multiple factors
                     pattern_key = (check_time.weekday(), check_time.hour)
                     pattern = self.hourly_patterns.get(pattern_key, {'total': 0})
                     
@@ -266,54 +290,58 @@ class OccupancyPatternAnalyzer:
     
     def get_predicted_current_period(self, current_datetime: datetime = None) -> Tuple[Optional[datetime], Optional[datetime], Optional[str], float]:
         """
-        Get the predicted current occupancy period (start, end, status).
+        Analyze the current occupancy period including when it started and when it will end.
         
         Args:
             current_datetime: Reference time (default: now)
             
         Returns:
-            Tuple[datetime, datetime, str, float]: (start_datetime, end_datetime, status, confidence)
-                - start_datetime: When current period began
-                - end_datetime: When current period is expected to end
-                - status: "EXPECTED_EMPTY" or "EXPECTED_OCCUPIED"
-                - confidence: Confidence level (0.0-1.0)
+            Tuple containing:
+                - Period start datetime
+                - Expected period end datetime
+                - Current status ("EXPECTED_EMPTY" or "EXPECTED_OCCUPIED")
+                - Confidence level (0.0-1.0)
         """
-        # Update probabilities if needed
         if self._should_reload_history():
             self._load_and_process_history()
         
         now = current_datetime or datetime.now()
         
-        # Get current state
+        # Determine current state
         current_prob = self.get_predicted_empty_probability(now)
         current_state = "EXPECTED_EMPTY" if current_prob > 0.5 else "EXPECTED_OCCUPIED"
         
-        # Look back to find period start
+        # Thresholds for reliable state detection
         stable_threshold_empty = 0.7
         stable_threshold_occupied = 0.3
         
+        # Look backward to find period start
         period_start = now
-        for hours_back in range(24):  # Look back up to 24 hours
+        for hours_back in range(24):
             check_time = now - timedelta(hours=hours_back)
             prob = self.get_predicted_empty_probability(check_time)
             
-            # Check if state was different
-            check_state = "EXPECTED_EMPTY" if prob > stable_threshold_empty else "EXPECTED_OCCUPIED" if prob < stable_threshold_occupied else None
+            # Detect state transition
+            check_state = None
+            if prob > stable_threshold_empty:
+                check_state = "EXPECTED_EMPTY"
+            elif prob < stable_threshold_occupied:
+                check_state = "EXPECTED_OCCUPIED"
             
             if check_state and check_state != current_state:
-                period_start = check_time + timedelta(hours=1)  # First hour in current period
+                period_start = check_time + timedelta(hours=1)
                 break
         
-        # Get the next significant event as period end
+        # Find period end using next event
         next_event = self.get_next_significant_event(now)
         period_end = next_event[0] if next_event[0] else None
         
-        # Calculate confidence based on stability of the period
+        # Calculate confidence based on period stability
         if period_start and period_end:
             duration_hours = (period_end - now).total_seconds() / 3600
             past_hours = (now - period_start).total_seconds() / 3600
             
-            # Check stability of the period
+            # Analyze probabilities throughout the period
             period_probs = []
             for hour in range(int(max(1, past_hours)), int(duration_hours) + 1):
                 check_time = period_start + timedelta(hours=hour)
@@ -322,9 +350,11 @@ class OccupancyPatternAnalyzer:
                     period_probs.append(prob)
             
             if period_probs:
+                # Calculate statistics about period stability
                 avg_prob = sum(period_probs) / len(period_probs)
                 prob_variance = sum((p - avg_prob) ** 2 for p in period_probs) / len(period_probs)
                 
+                # Weighted confidence calculation
                 confidence = min(0.9, max(0.1,
                     (1.0 - prob_variance) * 0.5 +  # Lower variance = higher confidence
                     (abs(avg_prob - 0.5) * 2) * 0.3 +  # Stronger probability = higher confidence
@@ -339,42 +369,42 @@ class OccupancyPatternAnalyzer:
     
     def record_user_feedback(self, feedback_timestamp: datetime, actual_status: str):
         """
-        Record user feedback about occupancy status to improve predictions.
-        Saves feedback to both memory and CSV for persistence.
+        Incorporate user feedback to improve future predictions.
+        
+        User feedback is considered high-value data and is given extra weight
+        when calculating probabilities.
         
         Args:
-            feedback_timestamp: Timestamp of the feedback
+            feedback_timestamp: When the feedback applies to
             actual_status: "USER_CONFIRMED_HOME" or "USER_CONFIRMED_AWAY"
         """
         if actual_status not in ["USER_CONFIRMED_HOME", "USER_CONFIRMED_AWAY"]:
             logger.error(f"Invalid feedback status: {actual_status}")
             return
         
-        # Convert feedback status to our internal format
+        # Convert feedback to empty/occupied state
         is_empty = (actual_status == "USER_CONFIRMED_AWAY")
         
         day_of_week = feedback_timestamp.weekday()
         hour = feedback_timestamp.hour
         key = (day_of_week, hour)
         
-        # Initialize pattern if not exists
+        # Initialize or update pattern data
         if key not in self.hourly_patterns:
             self.hourly_patterns[key] = {'total': 0, 'empty': 0}
         
-        # Update pattern counts
         self.hourly_patterns[key]['total'] += 1
         if is_empty:
             self.hourly_patterns[key]['empty'] += 1
         
-        # Recalculate probability for this hour
+        # Calculate new raw probability
         pattern = self.hourly_patterns[key]
         new_probability = pattern['empty'] / pattern['total']
         
-        # Apply learning rate to smooth the update
-        learning_rate = 0.3  # Weight of new feedback
+        # Apply weighted learning
+        learning_rate = 0.3  # Controls adaptation speed
         old_probability = self.empty_probabilities.get(key, 0.5)
         
-        # Weighted average update
         self.empty_probabilities[key] = (
             old_probability * (1 - learning_rate) + 
             new_probability * learning_rate
@@ -384,36 +414,32 @@ class OccupancyPatternAnalyzer:
                    f"P(EMPTY) = {self.empty_probabilities[key]:.3f} "
                    f"(feedback: {actual_status})")
         
-        # Save the updated probabilities
+        # Persist updated model
         self._save_probabilities()
         
-        # Save feedback to CSV for persistence
+        # Record feedback in history file for future processing
         self._save_feedback_to_csv(feedback_timestamp, actual_status)
     
     def _save_feedback_to_csv(self, feedback_timestamp: datetime, actual_status: str):
         """
-        Save user feedback to CSV file for long-term persistence.
+        Save user feedback to history CSV for long-term storage.
         
         Args:
-            feedback_timestamp: Timestamp of the feedback
+            feedback_timestamp: Time of the feedback
             actual_status: "USER_CONFIRMED_HOME" or "USER_CONFIRMED_AWAY"
         """
         try:
-            # Create feedback entry
             feedback_row = {
                 'timestamp': feedback_timestamp.isoformat(),
                 'status': actual_status,
                 'people_count': 1 if actual_status == "USER_CONFIRMED_HOME" else 0
             }
             
-            # Check if file exists to determine if we need headers
             file_exists = os.path.exists(self.history_file)
             
-            # Append feedback to CSV
             with open(self.history_file, 'a', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=['timestamp', 'status', 'people_count'])
                 
-                # Write header if file doesn't exist
                 if not file_exists:
                     writer.writeheader()
                 
@@ -426,14 +452,13 @@ class OccupancyPatternAnalyzer:
     
     def get_next_expected_return_time(self, current_datetime: datetime) -> Optional[datetime]:
         """
-        Predict when people are expected to return if currently empty.
-        Updated to use the new significant event method.
+        Predict when occupants are expected to return to an empty space.
         
         Args:
-            current_datetime: Current datetime
+            current_datetime: Reference time
             
         Returns:
-            datetime or None: Expected return time, None if uncertain
+            datetime or None: Expected return time, or None if undetermined
         """
         next_event = self.get_next_significant_event(current_datetime)
         
@@ -446,14 +471,13 @@ class OccupancyPatternAnalyzer:
     
     def get_next_expected_departure_time(self, current_datetime: datetime) -> Optional[datetime]:
         """
-        Predict when people are expected to leave if currently occupied.
-        Updated to use the new significant event method.
+        Predict when occupants are expected to leave an occupied space.
         
         Args:
-            current_datetime: Current datetime
+            current_datetime: Reference time
             
         Returns:
-            datetime or None: Expected departure time, None if uncertain
+            datetime or None: Expected departure time, or None if undetermined
         """
         next_event = self.get_next_significant_event(current_datetime)
         
@@ -466,16 +490,16 @@ class OccupancyPatternAnalyzer:
     
     def get_expected_empty_duration(self, current_datetime: datetime) -> Optional[timedelta]:
         """
-        Predict how long the space will remain empty.
-        Updated to use the new significant event method.
+        Estimate how long a space will remain empty.
+        
+        Useful for determining if ventilation can be reduced for an extended period.
         
         Args:
-            current_datetime: Current datetime
+            current_datetime: Reference time
             
         Returns:
-            timedelta or None: Expected duration of emptiness, None if uncertain
+            timedelta or None: Expected duration of emptiness, or None if undetermined
         """
-        # Find the next expected return time
         return_time = self.get_next_expected_return_time(current_datetime)
         
         if return_time:
@@ -487,18 +511,25 @@ class OccupancyPatternAnalyzer:
         return None
     
     def _should_reload_history(self) -> bool:
-        """Check if history should be reloaded based on time or file changes."""
-        # Reload if we haven't loaded before
+        """
+        Determine if historical data needs to be reprocessed.
+        
+        Prevents unnecessary processing by checking file modification time
+        and enforcing minimum intervals between updates.
+        
+        Returns:
+            bool: True if reload is needed, False otherwise
+        """
+        # First-time load
         if self.last_load_time is None:
             return True
         
-        # Emergency reload if it's been more than 72 hours (fallback if periodic updates fail)
+        # Fallback reload for stale data
         if datetime.now() - self.last_load_time > timedelta(hours=72):
             logger.warning("Emergency reload triggered - data is more than 72 hours old")
             return True
         
-        # Reload if the history file has been modified AND it's been at least 6 hours since last load
-        # This prevents frequent reloads when getter methods are called in succession
+        # Regular update check - file modified and sufficient time elapsed
         try:
             if os.path.exists(self.history_file):
                 file_mtime = datetime.fromtimestamp(os.path.getmtime(self.history_file))
@@ -514,10 +545,12 @@ class OccupancyPatternAnalyzer:
     
     def update_patterns(self, force: bool = True) -> bool:
         """
-        Update occupancy patterns, typically called periodically from main.py.
+        Trigger a manual update of occupancy patterns.
+        
+        Typically called periodically by the system scheduler.
         
         Args:
-            force: Whether to force an update regardless of time conditions
+            force: Whether to bypass time-based update restrictions
             
         Returns:
             bool: True if patterns were updated, False otherwise
@@ -529,7 +562,15 @@ class OccupancyPatternAnalyzer:
         return False
     
     def get_pattern_summary(self) -> Dict[str, Any]:
-        """Get a summary of the learned patterns."""
+        """
+        Generate a human-readable summary of occupancy patterns.
+        
+        Provides an overview of when spaces are typically occupied or empty,
+        organized by day of week.
+        
+        Returns:
+            Dict containing pattern summary data
+        """
         if self._should_reload_history():
             self._load_and_process_history()
         
@@ -540,21 +581,21 @@ class OccupancyPatternAnalyzer:
             "empty_hour_ranges": {}
         }
         
-        # Organize patterns by day of week
+        # Organize by day of week
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         for day_idx in range(7):
             day_name = days[day_idx]
             summary["day_patterns"][day_name] = {}
             
-            # Find typical empty hours for this day
+            # Collect hours with high empty probability
             empty_hours = []
             for hour in range(24):
                 prob = self.empty_probabilities.get((day_idx, hour), 0.5)
                 summary["day_patterns"][day_name][hour] = prob
-                if prob > 0.7:  # High probability of being empty
+                if prob > 0.7:  # High probability threshold
                     empty_hours.append(hour)
             
-            # Identify continuous ranges of empty hours
+            # Identify continuous time ranges
             if empty_hours:
                 ranges = []
                 start = empty_hours[0]

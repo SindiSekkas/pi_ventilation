@@ -1,6 +1,6 @@
 """
 Adaptive CO2-based Sleep Pattern Analyzer for ventilation system.
-Works with user-provided night mode settings and gradually refines them.
+Detects sleep patterns from CO2 data and gradually refines night mode settings.
 """
 import os
 import json
@@ -16,8 +16,11 @@ logger = logging.getLogger(__name__)
 
 class AdaptiveSleepAnalyzer:
     """
-    Analyzes CO2 patterns to detect sleep and wake events,
-    then gradually adapts user-provided night mode settings.
+    Analyzes CO2 patterns to detect sleep and wake events and adapts ventilation settings.
+    
+    Uses CO2 concentration changes as indicators of human activity to identify
+    when occupants typically fall asleep and wake up, then gradually refines
+    the ventilation system's night mode settings.
     """
     
     def __init__(self, data_manager, controller):
@@ -31,7 +34,7 @@ class AdaptiveSleepAnalyzer:
         self.data_manager = data_manager
         self.controller = controller
         
-        # Directory for storing sleep pattern data
+        # Storage configuration
         self.data_dir = "data/sleep_patterns"
         os.makedirs(self.data_dir, exist_ok=True)
         self.sleep_patterns_file = os.path.join(self.data_dir, "adaptive_sleep_patterns.json")
@@ -44,30 +47,30 @@ class AdaptiveSleepAnalyzer:
         self.max_daily_readings = 288  # 5-minute intervals for 24 hours
         self.current_day = datetime.now().day
         
-        # Algorithm parameters
-        self.min_co2_change_rate = 2.0  # ppm per minute - threshold for activity change
-        self.stability_window = 6  # How many readings to consider for stability
-        self.min_sleep_duration = 4 * 60  # 4 hours in minutes
-        self.max_sleep_duration = 12 * 60  # 12 hours in minutes
+        # Detection sensitivity parameters
+        self.min_co2_change_rate = 2.0  # ppm per minute threshold for activity change
+        self.stability_window = 6  # Number of readings to consider for stability
+        self.min_sleep_duration = 4 * 60  # Minimum sleep duration in minutes
+        self.max_sleep_duration = 12 * 60  # Maximum sleep duration in minutes
         
-        # Confidence and adjustment parameters
-        self.min_confidence_threshold = 0.7  # Minimum confidence to update night mode
-        self.adjustment_limit_minutes = 15  # Maximum minutes to adjust per detection
-        self.learning_rate = 0.2  # How quickly to adjust to new patterns
-        self.required_detections = 3  # Minimum detections before making adjustments
+        # Learning parameters
+        self.min_confidence_threshold = 0.7  # Confidence threshold for night mode updates
+        self.adjustment_limit_minutes = 15  # Maximum adjustment per detection in minutes
+        self.learning_rate = 0.2  # Adaptation rate for new patterns
+        self.required_detections = 3  # Detections needed before making adjustments
         
-        # Anti-false positive parameters
+        # False positive prevention
         self.last_sleep_start_time = None
         self.last_wake_up_time = None
         self.min_sleep_event_interval = 6  # Hours between sleep detection events
         self.min_wake_event_interval = 8  # Hours between wake detection events
-        self.sleep_detection_confidence_threshold = 0.75  # Higher threshold for sleep events
+        self.sleep_detection_confidence_threshold = 0.75  # Threshold for sleep events
         
         # Sleep state tracking
-        self.current_sleep_state = "awake"  # "awake" or "sleeping"
+        self.current_sleep_state = "awake"  # Current state: "awake" or "sleeping"
         self.state_changed_at = datetime.now()
         
-        # Initialize the daily recording
+        # Initialize daily tracking
         self._initialize_daily_tracking()
         
         # Thread control
@@ -75,7 +78,12 @@ class AdaptiveSleepAnalyzer:
         self.thread = None
 
     def _load_or_initialize_patterns(self):
-        """Load existing sleep patterns or initialize a new data structure."""
+        """
+        Load existing sleep patterns or create a new data structure.
+        
+        Returns:
+            dict: Sleep patterns data structure
+        """
         if os.path.exists(self.sleep_patterns_file):
             try:
                 with open(self.sleep_patterns_file, 'r') as f:
@@ -85,7 +93,7 @@ class AdaptiveSleepAnalyzer:
             except Exception as e:
                 logger.error(f"Error loading sleep patterns: {e}")
         
-        # Initialize new sleep patterns structure
+        # Default structure for new sleep patterns
         patterns = {
             "version": 1.0,
             "last_updated": datetime.now().isoformat(),
@@ -107,14 +115,18 @@ class AdaptiveSleepAnalyzer:
         return patterns
     
     def _initialize_daily_tracking(self):
-        """Initialize or reset the daily CO2 tracking."""
+        """Reset daily CO2 tracking for a new day."""
         self.daily_co2_readings = []
         self.current_day = datetime.now().day
     
     def save_patterns(self):
-        """Save sleep patterns to file."""
+        """
+        Save sleep patterns to persistent storage.
+        
+        Returns:
+            bool: Success or failure of save operation
+        """
         try:
-            # Update last updated timestamp
             self.sleep_patterns["last_updated"] = datetime.now().isoformat()
             
             with open(self.sleep_patterns_file, 'w') as f:
@@ -128,13 +140,17 @@ class AdaptiveSleepAnalyzer:
     
     def update_co2_data(self):
         """
-        Update CO2 data with latest reading.
-        This should be called regularly, e.g., every 5 minutes.
+        Record latest CO2 reading and analyze patterns.
+        
+        Should be called regularly (approximately every 5 minutes).
+        
+        Returns:
+            bool: Success or failure of the update operation
         """
         try:
             now = datetime.now()
             
-            # Check if day has changed, if so start a new daily record
+            # Start new daily record if day has changed
             if now.day != self.current_day:
                 self._process_daily_data()
                 self._initialize_daily_tracking()
@@ -145,7 +161,7 @@ class AdaptiveSleepAnalyzer:
                 logger.warning("No CO2 reading available")
                 return False
             
-            # Add to daily readings
+            # Record the reading
             self.daily_co2_readings.append({
                 "timestamp": now.isoformat(),
                 "co2": co2,
@@ -153,11 +169,11 @@ class AdaptiveSleepAnalyzer:
                 "minute": now.minute
             })
             
-            # Trim if needed
+            # Maintain maximum readings limit
             if len(self.daily_co2_readings) > self.max_daily_readings:
                 self.daily_co2_readings = self.daily_co2_readings[-self.max_daily_readings:]
             
-            # Analyze in real-time if we have enough data
+            # Analyze if we have sufficient data
             if len(self.daily_co2_readings) >= self.stability_window * 2:
                 self._real_time_pattern_analysis()
             
@@ -168,13 +184,13 @@ class AdaptiveSleepAnalyzer:
 
     def get_predicted_sleep_time_for_day(self, day_of_week: int) -> Tuple[Optional[datetime], float]:
         """
-        Get predicted sleep time with confidence for a specific day of week.
+        Predict sleep time with confidence level for a specific weekday.
         
         Args:
             day_of_week: Day of week (0=Monday, 6=Sunday)
             
         Returns:
-            Tuple[Optional[datetime], float]: (predicted_sleep_time, confidence)
+            Tuple containing predicted sleep time and confidence level (0.0-1.0)
         """
         weekday_key = str(day_of_week)
         pattern = self.sleep_patterns["weekday_patterns"].get(weekday_key, {})
@@ -182,24 +198,24 @@ class AdaptiveSleepAnalyzer:
         if not pattern.get("sleep"):
             return None, 0.0
         
-        # Calculate confidence based on multiple factors
+        # Calculate confidence from multiple factors
         detections = pattern.get("detections", 0)
         base_confidence = pattern.get("confidence", 0)
         
-        # Factor 1: Number of historical observations
-        detection_factor = min(1.0, detections / 10.0)  # Full confidence at 10+ detections
+        # Historical observations factor
+        detection_factor = min(1.0, detections / 10.0)
         
-        # Factor 2: Recent events impact
+        # Recent events impact factor
         recent_events = self._get_recent_events_for_weekday(day_of_week, "sleep_start")
         recent_factor = self._calculate_recent_event_factor(recent_events, pattern["sleep"])
         
-        # Factor 3: Time since last update
+        # Time decay factor
         time_factor = self._calculate_time_decay_factor()
         
-        # Factor 4: Variance factor (if we have daily patterns to analyze)
+        # Historical variance factor
         variance_factor = self._calculate_variance_factor(day_of_week, "sleep")
         
-        # Combined confidence
+        # Combined weighted confidence
         confidence = min(0.95, max(0.1, 
             base_confidence * 0.3 +
             detection_factor * 0.3 +
@@ -208,7 +224,7 @@ class AdaptiveSleepAnalyzer:
             variance_factor * 0.1
         ))
         
-        # Convert time string to datetime for today
+        # Convert time string to datetime
         try:
             today = datetime.now().date()
             time_parts = pattern["sleep"].split(":")
@@ -217,7 +233,7 @@ class AdaptiveSleepAnalyzer:
                 minute=int(time_parts[1])
             ))
             
-            # If sleep time is before noon, it's for next day
+            # Adjust if sleep time is after midnight
             if sleep_time.hour < 12:
                 sleep_time += timedelta(days=1)
                 
@@ -228,13 +244,13 @@ class AdaptiveSleepAnalyzer:
 
     def get_predicted_wake_time_for_day(self, day_of_week: int) -> Tuple[Optional[datetime], float]:
         """
-        Get predicted wake time with confidence for a specific day of week.
+        Predict wake time with confidence level for a specific weekday.
         
         Args:
             day_of_week: Day of week (0=Monday, 6=Sunday)
             
         Returns:
-            Tuple[Optional[datetime], float]: (predicted_wake_time, confidence)
+            Tuple containing predicted wake time and confidence level (0.0-1.0)
         """
         weekday_key = str(day_of_week)
         pattern = self.sleep_patterns["weekday_patterns"].get(weekday_key, {})
@@ -242,24 +258,24 @@ class AdaptiveSleepAnalyzer:
         if not pattern.get("wake"):
             return None, 0.0
         
-        # Calculate confidence based on multiple factors
+        # Calculate confidence from multiple factors
         detections = pattern.get("detections", 0)
         base_confidence = pattern.get("confidence", 0)
         
-        # Factor 1: Number of historical observations
-        detection_factor = min(1.0, detections / 10.0)  # Full confidence at 10+ detections
+        # Historical observations factor
+        detection_factor = min(1.0, detections / 10.0)
         
-        # Factor 2: Recent events impact
+        # Recent events impact factor
         recent_events = self._get_recent_events_for_weekday(day_of_week, "wake_up")
         recent_factor = self._calculate_recent_event_factor(recent_events, pattern["wake"])
         
-        # Factor 3: Time since last update
+        # Time decay factor
         time_factor = self._calculate_time_decay_factor()
         
-        # Factor 4: Variance factor (if we have daily patterns to analyze)
+        # Historical variance factor
         variance_factor = self._calculate_variance_factor(day_of_week, "wake")
         
-        # Combined confidence
+        # Combined weighted confidence
         confidence = min(0.95, max(0.1, 
             base_confidence * 0.3 +
             detection_factor * 0.3 +
@@ -268,7 +284,7 @@ class AdaptiveSleepAnalyzer:
             variance_factor * 0.1
         ))
         
-        # Convert time string to datetime for today
+        # Convert time string to datetime
         try:
             today = datetime.now().date()
             time_parts = pattern["wake"].split(":")
@@ -277,7 +293,7 @@ class AdaptiveSleepAnalyzer:
                 minute=int(time_parts[1])
             ))
             
-            # If wake time is in afternoon, it's for next day
+            # Adjust if wake time is in the evening (unusual)
             if wake_time.hour > 12:
                 wake_time += timedelta(days=1)
                 
@@ -287,7 +303,17 @@ class AdaptiveSleepAnalyzer:
             return None, 0.0
 
     def _get_recent_events_for_weekday(self, day_of_week: int, event_type: str, days_back: int = 7) -> list:
-        """Get recent events for a specific weekday and event type."""
+        """
+        Get recent events matching specific weekday and type.
+        
+        Args:
+            day_of_week: Target day of week (0-6)
+            event_type: Event type to filter for
+            days_back: Number of days to look back
+            
+        Returns:
+            List of matching events
+        """
         recent_events = []
         cutoff_date = datetime.now() - timedelta(days=days_back)
         
@@ -304,11 +330,19 @@ class AdaptiveSleepAnalyzer:
         return recent_events
 
     def _calculate_recent_event_factor(self, recent_events: list, pattern_time: str) -> float:
-        """Calculate confidence factor based on recent events."""
-        if not recent_events:
-            return 0.8  # Neutral factor when no recent events
+        """
+        Calculate confidence factor based on consistency of recent events.
         
-        # Calculate variance of recent events from the pattern
+        Args:
+            recent_events: List of recent events
+            pattern_time: Pattern time string to compare against
+            
+        Returns:
+            Confidence factor (0.0-1.0)
+        """
+        if not recent_events:
+            return 0.8  # Default when no recent events
+        
         try:
             pattern_minutes = self._time_str_to_minutes(pattern_time)
             event_minutes = []
@@ -320,20 +354,25 @@ class AdaptiveSleepAnalyzer:
             
             if event_minutes:
                 variance = np.var(event_minutes)
-                # Lower variance = higher confidence
-                return max(0.3, min(1.0, 1.0 - (variance / 1800)))  # Normalize variance
+                # Higher consistency (lower variance) increases confidence
+                return max(0.3, min(1.0, 1.0 - (variance / 1800)))
         except:
             pass
         
         return 0.8  # Default factor
 
     def _calculate_time_decay_factor(self) -> float:
-        """Calculate confidence factor based on time since last update."""
+        """
+        Calculate confidence decay based on time since last data update.
+        
+        Returns:
+            Confidence factor (0.0-1.0)
+        """
         try:
             last_updated = datetime.fromisoformat(self.sleep_patterns.get("last_updated", datetime.now().isoformat()))
             days_since_update = (datetime.now() - last_updated).days
             
-            # Confidence decays over time
+            # Step decay based on elapsed time
             if days_since_update <= 1:
                 return 1.0
             elif days_since_update <= 7:
@@ -346,8 +385,16 @@ class AdaptiveSleepAnalyzer:
             return 0.8  # Default factor
 
     def _calculate_variance_factor(self, day_of_week: int, time_type: str) -> float:
-        """Calculate confidence factor based on historical variance."""
-        # Look at daily patterns for this weekday
+        """
+        Calculate confidence factor based on historical pattern consistency.
+        
+        Args:
+            day_of_week: Target day of week (0-6)
+            time_type: Pattern type ('sleep' or 'wake')
+            
+        Returns:
+            Confidence factor (0.0-1.0)
+        """
         day_patterns = []
         for date_str, pattern in self.sleep_patterns.get("daily_patterns", {}).items():
             try:
@@ -358,36 +405,36 @@ class AdaptiveSleepAnalyzer:
                 continue
         
         if len(day_patterns) < 3:
-            return 0.8  # Need at least 3 patterns to calculate variance
+            return 0.8  # Insufficient data for variance calculation
         
-        # Calculate variance in minutes
         try:
             pattern_minutes = [self._time_str_to_minutes(t) for t in day_patterns]
             variance = np.var(pattern_minutes)
             
-            # Lower variance = higher confidence
-            return max(0.4, min(1.0, 1.0 - (variance / 1800)))  # Normalize variance
+            # Lower variance indicates higher confidence
+            return max(0.4, min(1.0, 1.0 - (variance / 1800)))
         except:
             return 0.8  # Default factor
 
     def _real_time_pattern_analysis(self):
         """
-        Perform real-time analysis of CO2 patterns.
-        Detects significant changes that might indicate sleep/wake transitions.
+        Analyze recent CO2 data to detect sleep/wake transitions in real-time.
+        
+        Uses sliding windows to identify significant changes in CO2 patterns
+        that correlate with activity state changes.
         """
         try:
-            # Get the most recent readings
+            # Get recent readings for analysis
             recent_readings = self.daily_co2_readings[-self.stability_window*2:]
             
-            # Skip if we don't have enough data
             if len(recent_readings) < self.stability_window * 2:
                 return
                 
-            # Split into two windows
+            # Split into before and after windows
             window1 = recent_readings[:self.stability_window]
             window2 = recent_readings[self.stability_window:]
             
-            # Calculate average rate of change in each window (ppm per minute)
+            # Calculate CO2 rate of change in each window
             rates1 = []
             rates2 = []
             co2_levels1 = []
@@ -399,7 +446,7 @@ class AdaptiveSleepAnalyzer:
                 try:
                     prev_time = datetime.fromisoformat(prev["timestamp"])
                     curr_time = datetime.fromisoformat(curr["timestamp"])
-                    time_diff = (curr_time - prev_time).total_seconds() / 60  # minutes
+                    time_diff = (curr_time - prev_time).total_seconds() / 60
                     if time_diff > 0:
                         rate = (curr["co2"] - prev["co2"]) / time_diff
                         rates1.append(rate)
@@ -413,7 +460,7 @@ class AdaptiveSleepAnalyzer:
                 try:
                     prev_time = datetime.fromisoformat(prev["timestamp"])
                     curr_time = datetime.fromisoformat(curr["timestamp"])
-                    time_diff = (curr_time - prev_time).total_seconds() / 60  # minutes
+                    time_diff = (curr_time - prev_time).total_seconds() / 60
                     if time_diff > 0:
                         rate = (curr["co2"] - prev["co2"]) / time_diff
                         rates2.append(rate)
@@ -421,47 +468,40 @@ class AdaptiveSleepAnalyzer:
                 except:
                     continue
             
-            # Skip if we don't have enough rate data
             if not rates1 or not rates2:
                 return
             
-            # Calculate average rates and levels
+            # Calculate statistics for comparison
             avg_rate1 = np.mean(rates1)
             avg_rate2 = np.mean(rates2)
             avg_co2_1 = np.mean(co2_levels1) if co2_levels1 else 0
             avg_co2_2 = np.mean(co2_levels2) if co2_levels2 else 0
-            
-            # Calculate variability (standard deviation)
             var1 = np.std(rates1) if len(rates1) > 1 else 0
             var2 = np.std(rates2) if len(rates2) > 1 else 0
             
-            # Get current time
             now = datetime.now()
             current_time = now.time()
             
-            # Check if enough time has passed since last sleep event
+            # Verify enough time has passed since last events
             enough_time_passed_sleep = True
             if self.last_sleep_start_time:
-                time_since_last_sleep = (now - self.last_sleep_start_time).total_seconds() / 3600  # hours
+                time_since_last_sleep = (now - self.last_sleep_start_time).total_seconds() / 3600
                 enough_time_passed_sleep = time_since_last_sleep >= self.min_sleep_event_interval
             
-            # Check if enough time has passed since last wake event
             enough_time_passed_wake = True
             if self.last_wake_up_time:
-                time_since_last_wake = (now - self.last_wake_up_time).total_seconds() / 3600  # hours
+                time_since_last_wake = (now - self.last_wake_up_time).total_seconds() / 3600
                 enough_time_passed_wake = time_since_last_wake >= self.min_wake_event_interval
             
-            # Get current night mode settings from controller
+            # Get current night mode settings
             night_mode_info = self.controller.get_status()["night_mode"]
             night_start_hour = night_mode_info.get("start_hour", 23)
             night_end_hour = night_mode_info.get("end_hour", 7)
             
-            # Only detect sleep patterns around expected sleep time
-            # Allow 2 hours before and 1 hour after configured night start time
+            # Determine if current time is within expected sleep time window
             expected_sleep_time_start = (night_start_hour - 2) % 24
             expected_sleep_time_end = (night_start_hour + 1) % 24
             
-            # Handle cases where the range crosses midnight
             is_sleep_time = False
             if expected_sleep_time_start > expected_sleep_time_end:
                 is_sleep_time = (current_time.hour >= expected_sleep_time_start or 
@@ -470,12 +510,10 @@ class AdaptiveSleepAnalyzer:
                 is_sleep_time = (expected_sleep_time_start <= current_time.hour <= 
                                 expected_sleep_time_end)
             
-            # Only detect wake patterns around expected wake time
-            # Allow 1 hour before and 2 hours after configured night end time
+            # Determine if current time is within expected wake time window
             expected_wake_time_start = (night_end_hour - 1) % 24
             expected_wake_time_end = (night_end_hour + 2) % 24
             
-            # Handle cases where the range crosses midnight
             is_wake_time = False
             if expected_wake_time_start > expected_wake_time_end:
                 is_wake_time = (current_time.hour >= expected_wake_time_start or 
@@ -484,18 +522,10 @@ class AdaptiveSleepAnalyzer:
                 is_wake_time = (expected_wake_time_start <= current_time.hour <= 
                                expected_wake_time_end)
             
-            # Get ventilation status to avoid false detection during ventilation changes
+            # Check ventilation status to avoid false detections
             ventilation_status = self.data_manager.latest_data["room"]["ventilated"]
             
-            # For detecting sleep start:
-            # - We should be in awake state
-            # - CO2 rate should decrease (people breathing less when falling asleep)
-            # - Variability should decrease (less movement)
-            # - It should be appropriate sleep time
-            # - Enough time has passed since last sleep detection
-            # - Ventilation should not have recently changed
-            
-            # Sleep detection - CO2 decreasing, variability decreasing, around night start time
+            # Sleep detection conditions
             if (self.current_sleep_state == "awake" and
                 avg_rate1 > avg_rate2 + self.min_co2_change_rate and 
                 var1 > var2 and
@@ -503,12 +533,9 @@ class AdaptiveSleepAnalyzer:
                 enough_time_passed_sleep and
                 not ventilation_status):
                 
-                # Calculate confidence for this event
                 confidence = min(1.0, abs(avg_rate1 - avg_rate2) / self.min_co2_change_rate)
                 
-                # Only log high confidence sleep events
                 if confidence >= self.sleep_detection_confidence_threshold:
-                    # This indicates going to sleep
                     self._log_sleep_event("sleep_start", now, {
                         "rate_before": avg_rate1,
                         "rate_after": avg_rate2,
@@ -516,33 +543,22 @@ class AdaptiveSleepAnalyzer:
                         "var_after": var2,
                         "confidence": confidence
                     })
-                    # Update state tracking
                     self.current_sleep_state = "sleeping"
                     self.state_changed_at = now
-                    # Update last sleep event time
                     self.last_sleep_start_time = now
             
-            # For detecting wake up:
-            # - We should be in sleeping state
-            # - CO2 rate should increase (people breathing more when waking up)
-            # - It should be appropriate wake time
-            # - Enough time has passed since last wake detection
-            # - Check for significant CO2 increase when ventilation is OFF
-            
-            # Wake detection - CO2 increasing significantly, around night end time
+            # Wake detection conditions
             elif (self.current_sleep_state == "sleeping" and
                   is_wake_time and
                   enough_time_passed_wake):
                   
-                # Primary detection method - significant CO2 increase when ventilation is OFF
+                # Primary detection method - CO2 increase when ventilation is OFF
                 if (not ventilation_status and 
                     avg_rate2 > avg_rate1 + self.min_co2_change_rate and
                     var2 > var1):
                     
-                    # Calculate confidence for this event
                     confidence = min(1.0, abs(avg_rate2 - avg_rate1) / self.min_co2_change_rate)
                     
-                    # Only log high confidence wake events
                     if confidence >= self.sleep_detection_confidence_threshold:
                         self._log_sleep_event("wake_up", now, {
                             "rate_before": avg_rate1,
@@ -552,31 +568,26 @@ class AdaptiveSleepAnalyzer:
                             "confidence": confidence,
                             "detection_method": "rate_increase"
                         })
-                        # Update state tracking
                         self.current_sleep_state = "awake"
                         self.state_changed_at = now
-                        # Update last wake event time
                         self.last_wake_up_time = now
                 
-                # Alternative detection - rapid CO2 increase after ventilation turned OFF
-                # This catches cases where someone wakes up, turns ventilation ON, then OFF
+                # Alternative detection - rapid CO2 level increase
                 elif (not ventilation_status and 
-                      avg_co2_2 > avg_co2_1 + 50 and  # Rapid CO2 increase of at least 50 ppm
+                      avg_co2_2 > avg_co2_1 + 50 and
                       enough_time_passed_wake):
                     
                     confidence = min(1.0, (avg_co2_2 - avg_co2_1) / 100)
                     
-                    if confidence >= 0.65:  # Slightly lower threshold for this method
+                    if confidence >= 0.65:
                         self._log_sleep_event("wake_up", now, {
                             "co2_before": avg_co2_1,
                             "co2_after": avg_co2_2,
                             "confidence": confidence,
                             "detection_method": "level_increase"
                         })
-                        # Update state tracking
                         self.current_sleep_state = "awake"
                         self.state_changed_at = now
-                        # Update last wake event time
                         self.last_wake_up_time = now
             
         except Exception as e:
@@ -584,15 +595,15 @@ class AdaptiveSleepAnalyzer:
     
     def _log_sleep_event(self, event_type, timestamp, details):
         """
-        Log a detected sleep-related event for further analysis.
+        Record a detected sleep or wake event.
         
         Args:
-            event_type (str): Type of event ('sleep_start' or 'wake_up')
-            timestamp (datetime): When the event was detected
-            details (dict): Additional details about the event
+            event_type: Type of event ('sleep_start' or 'wake_up')
+            timestamp: When the event was detected
+            details: Additional data about the event
         """
         try:
-            # For sleep_start events with low confidence - don't register them
+            # Skip low confidence sleep events
             if event_type == "sleep_start" and details['confidence'] < 0.7:
                 logger.debug(f"Ignoring low confidence sleep event: {details['confidence']:.2f}")
                 return
@@ -604,35 +615,27 @@ class AdaptiveSleepAnalyzer:
                 "details": details
             }
             
-            # Add to event history
+            # Record event and limit history size
             self.sleep_patterns["detected_events"].append(event)
-            
-            # Trim history if needed (keep only last 100 events)
             if len(self.sleep_patterns["detected_events"]) > 100:
                 self.sleep_patterns["detected_events"] = self.sleep_patterns["detected_events"][-100:]
             
-            # Log the event
             logger.info(
                 f"Detected potential {event_type} at {timestamp.strftime('%H:%M')} "
                 f"(confidence: {details['confidence']:.2f})"
             )
             
-            # Update weekday pattern
+            # Update weekday pattern data
             weekday = timestamp.weekday()
             weekday_key = str(weekday)
-            
-            # Format time as string
             time_str = timestamp.strftime("%H:%M")
-            
-            # Update pattern for this weekday
             pattern = self.sleep_patterns["weekday_patterns"][weekday_key]
             
-            # Update sleep or wake time and increment detection count
             if event_type == "sleep_start":
                 if pattern["sleep"] is None:
                     pattern["sleep"] = time_str
                 else:
-                    # Average with existing value, weighted by confidence
+                    # Weighted average with existing value
                     current = self._time_str_to_minutes(pattern["sleep"])
                     new = self._time_str_to_minutes(time_str)
                     updated = (current * (1 - self.learning_rate) + new * self.learning_rate)
@@ -641,7 +644,7 @@ class AdaptiveSleepAnalyzer:
                 pattern["detections"] += 1
                 pattern["confidence"] = max(pattern["confidence"], details["confidence"])
                 
-                # If we have enough detections, update night start time
+                # Update night start time if we have sufficient confidence
                 if pattern["detections"] >= self.required_detections and pattern["confidence"] >= self.min_confidence_threshold:
                     self._adjust_night_start_time(timestamp, details["confidence"])
                 
@@ -649,7 +652,7 @@ class AdaptiveSleepAnalyzer:
                 if pattern["wake"] is None:
                     pattern["wake"] = time_str
                 else:
-                    # Average with existing value, weighted by confidence
+                    # Weighted average with existing value
                     current = self._time_str_to_minutes(pattern["wake"])
                     new = self._time_str_to_minutes(time_str)
                     updated = (current * (1 - self.learning_rate) + new * self.learning_rate)
@@ -658,11 +661,11 @@ class AdaptiveSleepAnalyzer:
                 pattern["detections"] += 1
                 pattern["confidence"] = max(pattern["confidence"], details["confidence"])
                 
-                # If we have enough detections, update night end time
+                # Update night end time if we have sufficient confidence
                 if pattern["detections"] >= self.required_detections and pattern["confidence"] >= self.min_confidence_threshold:
                     self._adjust_night_end_time(timestamp, details["confidence"])
             
-            # Save patterns after each event
+            # Persist changes
             self.save_patterns()
             
         except Exception as e:
@@ -670,11 +673,14 @@ class AdaptiveSleepAnalyzer:
     
     def _adjust_night_start_time(self, detected_time, confidence):
         """
-        Gradually adjust night mode start time based on detected sleep start.
+        Update ventilation night mode start time based on detected sleep pattern.
         
         Args:
-            detected_time: Detected sleep start time
-            confidence: Confidence level of detection
+            detected_time: When sleep was detected
+            confidence: Confidence level of the detection
+            
+        Returns:
+            bool: Whether an adjustment was made
         """
         try:
             # Get current night mode settings
@@ -685,47 +691,40 @@ class AdaptiveSleepAnalyzer:
             
             current_start_hour = night_mode_info.get("start_hour", 23)
             
-            # Convert detected time to hour
+            # Convert times to minutes for comparison
             detected_hour = detected_time.hour
             detected_minute = detected_time.minute
             detected_time_minutes = detected_hour * 60 + detected_minute
-            
-            # Convert current setting to minutes
             current_start_minutes = current_start_hour * 60
             
-            # Calculate difference (in minutes)
-            # Handle cases that cross midnight
+            # Handle midnight crossover cases
             if detected_hour < 12 and current_start_hour > 12:
-                # Detected time is after midnight, current time is before
                 detected_time_minutes += 24 * 60
             elif detected_hour > 12 and current_start_hour < 12:
-                # Current time is after midnight, detected time is before
                 current_start_minutes += 24 * 60
             
             diff_minutes = detected_time_minutes - current_start_minutes
             
-            # Only adjust if difference is significant but not extreme
+            # Skip minor differences
             if abs(diff_minutes) < 5:
                 logger.debug(f"Difference too small ({diff_minutes} min), not adjusting night start time")
                 return False
             
-            # Limit adjustment to prevent drastic changes
+            # Limit and scale adjustment
             adjustment = max(-self.adjustment_limit_minutes, 
                            min(self.adjustment_limit_minutes, diff_minutes))
-            
-            # Scale adjustment by confidence
             adjustment = int(adjustment * confidence * self.learning_rate)
             
-            # Calculate new hour, keeping it in 0-23 range
+            # Calculate new time
             new_minutes = (current_start_minutes + adjustment) % (24 * 60)
             new_hour = new_minutes // 60
             
-            # Don't adjust if the new hour is the same
+            # Skip if adjustment wouldn't change the hour
             if new_hour == current_start_hour:
                 logger.debug("Adjustment too small, would result in same hour")
                 return False
             
-            # Log the adjustment
+            # Record the adjustment
             self.sleep_patterns["night_mode_adjustments"].append({
                 "timestamp": datetime.now().isoformat(),
                 "type": "start_time",
@@ -740,7 +739,7 @@ class AdaptiveSleepAnalyzer:
             self.controller.set_night_mode(
                 enabled=night_mode_info.get("enabled", True),
                 start_hour=new_hour,
-                end_hour=None  # Don't change end hour
+                end_hour=None  # Keep existing end hour
             )
             
             logger.info(f"Adjusted night mode start time from {current_start_hour}:00 to {new_hour}:00 based on detected sleep at {detected_time.strftime('%H:%M')}")
@@ -752,11 +751,14 @@ class AdaptiveSleepAnalyzer:
     
     def _adjust_night_end_time(self, detected_time, confidence):
         """
-        Gradually adjust night mode end time based on detected wake up.
+        Update ventilation night mode end time based on detected wake pattern.
         
         Args:
-            detected_time: Detected wake up time
-            confidence: Confidence level of detection
+            detected_time: When waking was detected
+            confidence: Confidence level of the detection
+            
+        Returns:
+            bool: Whether an adjustment was made
         """
         try:
             # Get current night mode settings
@@ -767,52 +769,45 @@ class AdaptiveSleepAnalyzer:
             
             current_end_hour = night_mode_info.get("end_hour", 7)
             
-            # Convert detected time to hour
+            # Convert times to minutes for comparison
             detected_hour = detected_time.hour
             detected_minute = detected_time.minute
             detected_time_minutes = detected_hour * 60 + detected_minute
-            
-            # Convert current setting to minutes
             current_end_minutes = current_end_hour * 60
             
-            # Calculate difference (in minutes)
-            # Handle cases that cross midnight
+            # Handle midnight crossover cases
             if detected_hour < 12 and current_end_hour > 12:
-                # Detected time is after midnight, current time is before
                 detected_time_minutes += 24 * 60
             elif detected_hour > 12 and current_end_hour < 12:
-                # Current time is after midnight, detected time is before
                 current_end_minutes += 24 * 60
             
             diff_minutes = detected_time_minutes - current_end_minutes
             
-            # Only adjust if difference is significant but not extreme
+            # Skip minor differences
             if abs(diff_minutes) < 5:
                 logger.debug(f"Difference too small ({diff_minutes} min), not adjusting night end time")
                 return False
             
-            # Limit adjustment to prevent drastic changes
+            # Limit and scale adjustment
             adjustment = max(-self.adjustment_limit_minutes, 
                            min(self.adjustment_limit_minutes, diff_minutes))
-            
-            # Scale adjustment by confidence
             adjustment = int(adjustment * confidence * self.learning_rate)
             
-            # Calculate new hour, keeping it in 0-23 range
+            # Calculate new time
             new_minutes = (current_end_minutes + adjustment) % (24 * 60)
             new_hour = new_minutes // 60
             
-            # Don't adjust if the new hour is the same
+            # Skip if adjustment wouldn't change the hour
             if new_hour == current_end_hour:
                 logger.debug("Adjustment too small, would result in same hour")
                 return False
             
-            # Additional Safety: Ensure we don't set wake-up time too early
+            # Safety check for unreasonably early wake times
             if new_hour < 5 and current_end_hour >= 5:
                 logger.warning(f"Rejecting adjustment to {new_hour}:00 as it's too early. Minimum is 5:00")
                 return False
             
-            # Log the adjustment
+            # Record the adjustment
             self.sleep_patterns["night_mode_adjustments"].append({
                 "timestamp": datetime.now().isoformat(),
                 "type": "end_time",
@@ -826,7 +821,7 @@ class AdaptiveSleepAnalyzer:
             # Apply the adjustment
             self.controller.set_night_mode(
                 enabled=night_mode_info.get("enabled", True),
-                start_hour=None,  # Don't change start hour
+                start_hour=None,  # Keep existing start hour
                 end_hour=new_hour
             )
             
@@ -839,26 +834,22 @@ class AdaptiveSleepAnalyzer:
     
     def _process_daily_data(self):
         """
-        Process the collected daily data to extract sleep patterns.
-        This is called once per day (when the day changes).
+        Analyze collected daily CO2 data for sleep pattern extraction.
+        Called at the end of each day to validate real-time detections.
         """
         try:
-            if len(self.daily_co2_readings) < 24:  # Need at least 24 readings (2 hours at 5-min intervals)
+            if len(self.daily_co2_readings) < 24:
                 logger.warning("Not enough CO2 readings to process daily data")
                 return False
             
-            # Analysis logic is similar to the real-time version but 
-            # processes the entire day of data at once.
-            # This can be valuable for confirming and refining patterns.
-            
-            # Get the date for the data
+            # Determine date for the collected data
             try:
                 first_reading = self.daily_co2_readings[0]
                 data_date = datetime.fromisoformat(first_reading["timestamp"]).date().isoformat()
             except:
                 data_date = datetime.now().date().isoformat()
             
-            # Extract CO2 rates of change
+            # Extract and calculate CO2 change rates
             timestamps = []
             co2_values = []
             rates = []
@@ -870,9 +861,9 @@ class AdaptiveSleepAnalyzer:
                 try:
                     prev_time = datetime.fromisoformat(prev["timestamp"])
                     curr_time = datetime.fromisoformat(curr["timestamp"])
-                    time_diff = (curr_time - prev_time).total_seconds() / 60  # minutes
+                    time_diff = (curr_time - prev_time).total_seconds() / 60
                     
-                    if time_diff > 0 and time_diff < 30:  # Skip large gaps
+                    if time_diff > 0 and time_diff < 30:  # Exclude large gaps
                         timestamps.append(curr_time)
                         co2_values.append(curr["co2"])
                         rate = (curr["co2"] - prev["co2"]) / time_diff
@@ -880,12 +871,12 @@ class AdaptiveSleepAnalyzer:
                 except:
                     continue
             
-            if len(timestamps) < 12:  # Need at least 12 valid rate calculations
+            if len(timestamps) < 12:
                 logger.warning("Not enough valid CO2 rate calculations")
                 return False
             
-            # Calculate moving average of rates
-            window_size = 3  # 3 readings (15 minutes at 5-min intervals)
+            # Smooth rates with moving average
+            window_size = 3
             smoothed_rates = []
             
             for i in range(len(rates)):
@@ -894,24 +885,20 @@ class AdaptiveSleepAnalyzer:
                 window = rates[start:end]
                 smoothed_rates.append(sum(window) / len(window))
             
-            # Find potential sleep and wake times
-            # Sleep: Transition from higher to lower rate in evening
-            # Wake: Transition from lower to higher rate in morning
-            sleep_candidates = []
-            wake_candidates = []
-            
-            # Get night mode settings from controller
+            # Get reference night mode times
             night_mode_info = self.controller.get_status()["night_mode"]
             night_start_hour = night_mode_info.get("start_hour", 23)
             night_end_hour = night_mode_info.get("end_hour", 7)
             
-            # Search for sleep onset around night start time ±3 hours
+            # Define search windows for sleep and wake events
             sleep_min_hour = (night_start_hour - 3) % 24
             sleep_max_hour = (night_start_hour + 3) % 24
-            
-            # Search for wake around night end time ±3 hours
             wake_min_hour = (night_end_hour - 3) % 24
             wake_max_hour = (night_end_hour + 3) % 24
+            
+            # Find potential events by analyzing rate changes
+            sleep_candidates = []
+            wake_candidates = []
             
             for i in range(window_size, len(timestamps) - window_size):
                 before_window = smoothed_rates[i-window_size:i]
@@ -923,21 +910,21 @@ class AdaptiveSleepAnalyzer:
                 timestamp = timestamps[i]
                 hour = timestamp.hour
                 
-                # Check if hour is in sleep search range, handling midnight crossing
+                # Check if within sleep search window (handling midnight crossing)
                 in_sleep_range = False
-                if sleep_min_hour > sleep_max_hour:  # Range crosses midnight
+                if sleep_min_hour > sleep_max_hour:
                     in_sleep_range = hour >= sleep_min_hour or hour <= sleep_max_hour
                 else:
                     in_sleep_range = sleep_min_hour <= hour <= sleep_max_hour
                 
-                # Check if hour is in wake search range, handling midnight crossing
+                # Check if within wake search window (handling midnight crossing)
                 in_wake_range = False
-                if wake_min_hour > wake_max_hour:  # Range crosses midnight
+                if wake_min_hour > wake_max_hour:
                     in_wake_range = hour >= wake_min_hour or hour <= wake_max_hour
                 else:
                     in_wake_range = wake_min_hour <= hour <= wake_max_hour
                 
-                # Significant rate decrease in evening (around night start time)
+                # Detect significant rate decreases during sleep time
                 if (before_avg - after_avg > self.min_co2_change_rate and in_sleep_range):
                     sleep_candidates.append({
                         "timestamp": timestamp,
@@ -945,7 +932,7 @@ class AdaptiveSleepAnalyzer:
                         "confidence": min(1.0, (before_avg - after_avg) / self.min_co2_change_rate)
                     })
                 
-                # Significant rate increase in morning (around night end time)
+                # Detect significant rate increases during wake time
                 elif (after_avg - before_avg > self.min_co2_change_rate and in_wake_range):
                     wake_candidates.append({
                         "timestamp": timestamp,
@@ -953,34 +940,29 @@ class AdaptiveSleepAnalyzer:
                         "confidence": min(1.0, (after_avg - before_avg) / self.min_co2_change_rate)
                     })
             
-            # Select best candidates based on confidence
+            # Select most reliable events
             selected_sleep = max(sleep_candidates, key=lambda x: x["confidence"]) if sleep_candidates else None
             selected_wake = max(wake_candidates, key=lambda x: x["confidence"]) if wake_candidates else None
             
-            # Validate the pair makes sense
+            # Validate the event pair
             valid_pair = False
             if selected_sleep and selected_wake:
                 sleep_time = datetime.fromisoformat(selected_sleep["timestamp"].isoformat())
                 wake_time = datetime.fromisoformat(selected_wake["timestamp"].isoformat())
                 
-                # Handle overnight case
+                # Handle overnight sleep periods
                 if wake_time < sleep_time:
                     wake_time += timedelta(days=1)
                 
-                # Calculate duration in minutes
                 duration_minutes = (wake_time - sleep_time).total_seconds() / 60
-                
-                # Check if duration is reasonable
                 valid_pair = (self.min_sleep_duration <= duration_minutes <= self.max_sleep_duration)
             
-            # Store the validated pattern for this day
+            # Record validated sleep pattern
             if valid_pair:
                 sleep_time_str = selected_sleep["timestamp"].strftime("%H:%M")
                 wake_time_str = selected_wake["timestamp"].strftime("%H:%M")
-                
                 weekday = selected_sleep["timestamp"].weekday()
                 
-                # Store in daily patterns
                 self.sleep_patterns["daily_patterns"][data_date] = {
                     "sleep": sleep_time_str,
                     "wake": wake_time_str,
@@ -995,9 +977,7 @@ class AdaptiveSleepAnalyzer:
                     f"Wake at {wake_time_str} (conf: {selected_wake['confidence']:.2f})"
                 )
                 
-                # Save patterns
                 self.save_patterns()
-                
                 return True
             else:
                 logger.info(f"No valid sleep pattern detected for {data_date}")
@@ -1008,7 +988,15 @@ class AdaptiveSleepAnalyzer:
             return False
     
     def _time_str_to_minutes(self, time_str):
-        """Convert a time string (HH:MM) to minutes since midnight."""
+        """
+        Convert time string to minutes since midnight.
+        
+        Args:
+            time_str: Time string in format "HH:MM"
+            
+        Returns:
+            int: Minutes since midnight
+        """
         try:
             hours, minutes = map(int, time_str.split(':'))
             return hours * 60 + minutes
@@ -1016,14 +1004,27 @@ class AdaptiveSleepAnalyzer:
             return 0
     
     def _minutes_to_time_str(self, minutes):
-        """Convert minutes since midnight to a time string (HH:MM)."""
+        """
+        Convert minutes since midnight to time string.
+        
+        Args:
+            minutes: Minutes since midnight
+            
+        Returns:
+            str: Time string in format "HH:MM"
+        """
         minutes = int(minutes)
         hours = (minutes // 60) % 24
         mins = minutes % 60
         return f"{hours:02d}:{mins:02d}"
     
     def get_sleep_pattern_summary(self):
-        """Get a summary of detected sleep patterns and night mode adjustments."""
+        """
+        Create a summary of detected sleep patterns and settings.
+        
+        Returns:
+            dict: Summary of sleep patterns and confidence levels
+        """
         try:
             summary = {
                 "weekday_patterns": {},
@@ -1033,7 +1034,7 @@ class AdaptiveSleepAnalyzer:
                 "current_night_mode": {}
             }
             
-            # Get current night mode settings
+            # Include current night mode settings
             night_mode_info = self.controller.get_status()["night_mode"]
             summary["current_night_mode"] = {
                 "enabled": night_mode_info.get("enabled", False),
@@ -1042,12 +1043,11 @@ class AdaptiveSleepAnalyzer:
                 "active": night_mode_info.get("currently_active", False)
             }
             
-            # Format weekday patterns
+            # Summarize weekday patterns
             for day_key, pattern in self.sleep_patterns["weekday_patterns"].items():
                 day_name = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][int(day_key)]
                 
                 if pattern["sleep"] and pattern["wake"]:
-                    # Get confidence for today's predictions
                     sleep_time, sleep_confidence = self.get_predicted_sleep_time_for_day(int(day_key))
                     wake_time, wake_confidence = self.get_predicted_wake_time_for_day(int(day_key))
                     
@@ -1060,7 +1060,7 @@ class AdaptiveSleepAnalyzer:
                     }
                     summary["confidence_levels"][day_name] = max(sleep_confidence, wake_confidence)
             
-            # Get recent events (last 5)
+            # Include recent events
             events = self.sleep_patterns["detected_events"][-5:]
             for event in events:
                 try:
@@ -1073,7 +1073,7 @@ class AdaptiveSleepAnalyzer:
                 except:
                     continue
             
-            # Get recent adjustments (last 5)
+            # Include recent adjustments
             adjustments = self.sleep_patterns.get("night_mode_adjustments", [])[-5:]
             for adj in adjustments:
                 try:
@@ -1095,7 +1095,12 @@ class AdaptiveSleepAnalyzer:
             return {"error": str(e)}
             
     def start(self):
-        """Start the adaptive sleep analyzer in a separate thread."""
+        """
+        Start the sleep pattern analyzer in a background thread.
+        
+        Returns:
+            bool: Success or failure
+        """
         if self.thread is not None and self.thread.is_alive():
             logger.warning("Adaptive sleep analyzer already running")
             return False
@@ -1107,20 +1112,27 @@ class AdaptiveSleepAnalyzer:
         return True
         
     def stop(self):
-        """Stop the adaptive sleep analyzer."""
+        """
+        Stop the sleep pattern analyzer.
+        
+        Returns:
+            bool: Success or failure
+        """
         self.running = False
         logger.info("Stopped adaptive sleep analyzer")
         return True
         
     def _analysis_loop(self):
-        """Main loop for sleep pattern analysis."""
+        """
+        Main execution loop that runs in background thread.
+        Updates and analyzes CO2 data at regular intervals.
+        """
         try:
             while self.running:
-                # Update CO2 data and perform analysis
+                # Process new CO2 data
                 self.update_co2_data()
                 
-                # Sleep for 5 minutes
-                # Using 100 x 3 second intervals to allow for quicker shutdown
+                # Sleep in short intervals to allow clean shutdown
                 for _ in range(100):
                     if not self.running:
                         break

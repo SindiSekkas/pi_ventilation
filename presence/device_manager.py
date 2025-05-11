@@ -13,16 +13,16 @@ from utils.wol import wake_and_check
 logger = logging.getLogger(__name__)
 
 class DeviceManager:
-    """Manages devices for presence detection."""
+    """Manages network device discovery, tracking, and occupancy inference."""
     
     def __init__(self, data_dir="data/presence", notification_callback=None, telegram_ping_queue=None):
         """
-        Initialize the device manager.
+        Initialize the device tracking system.
         
         Args:
-            data_dir: Directory to store device data
-            notification_callback: Function to call when new devices are found
-            telegram_ping_queue: Queue for Telegram ping tasks
+            data_dir: Storage location for device persistence
+            notification_callback: Hook for device discovery notifications
+            telegram_ping_queue: Queue for interactive device verification
         """
         self.data_dir = data_dir
         os.makedirs(data_dir, exist_ok=True)
@@ -232,14 +232,17 @@ class DeviceManager:
 
     def process_telegram_ping_result(self, mac: str, detected_after_ping: bool):
         """
-        Process the result of a Telegram ping attempt.
+        Handle the outcome of an interactive device verification.
+        
+        When network scans are inconclusive, the system can request
+        device owners to confirm their presence via Telegram.
         
         Args:
-            mac: MAC address of the device
-            detected_after_ping: Whether device was detected after ping
-        
+            mac: Device identifier
+            detected_after_ping: Whether verification succeeded
+            
         Returns:
-            bool: Whether status changed
+            bool: Whether device status changed
         """
         with self._lock:
             mac = mac.lower()
@@ -279,13 +282,13 @@ class DeviceManager:
 
     def check_arp_table(self, mac):
         """
-        Check if a MAC address is present in the system's ARP table.
+        Check if device appears in system ARP table as fallback detection.
         
         Args:
-            mac: MAC address to check
-        
+            mac: Device identifier
+            
         Returns:
-            bool: Whether the device is found in the ARP table
+            bool: Whether device is in ARP table
         """
         try:
             # Use the check_device_presence function but only with arp_table method
@@ -301,14 +304,19 @@ class DeviceManager:
 
     def _get_offline_threshold(self, device, current_time):
         """
-        Get the threshold for marking a device offline based on type and time.
+        Determine how many missed scans to tolerate before marking device offline.
+        
+        Applies context-aware thresholds based on:
+        - Device type (phones get special treatment)
+        - Time of day (higher thresholds during sleep hours)
+        - Usage patterns (higher thresholds during typical active hours)
         
         Args:
-            device: Device object
-            current_time: Current time
-        
+            device: Target device
+            current_time: Reference timestamp
+            
         Returns:
-            int: Number of missed scans before marking inactive
+            int: Number of missed scans to tolerate
         """
         # Only special handling for phones
         if device.device_type != DeviceType.PHONE.value:
@@ -345,14 +353,18 @@ class DeviceManager:
     
     def is_probably_present(self, device, current_time=None):
         """
-        Determine if a device is probably present even if currently inactive.
+        Infer likely presence despite device being offline.
+        
+        Uses multiple heuristics:
+        - For phones: Considers typical usage hours and recent connection history
+        - For other devices: Uses simpler time-based threshold
         
         Args:
-            device: Device object
-            current_time: Current time (default: now)
-        
+            device: Target device
+            current_time: Reference timestamp
+            
         Returns:
-            bool: Whether device is probably present
+            bool: Likelihood of actual presence
         """
         now = current_time or datetime.now()
         
@@ -415,19 +427,19 @@ class DeviceManager:
     def add_device(self, mac, name=None, owner=None, device_type="unknown", vendor=None, 
                   count_for_presence=False, confirmation_status="unconfirmed"):
         """
-        Add a new device to the device manager.
+        Register a new network device or update an existing one.
         
         Args:
-            mac: MAC address of device
-            name: Name of device
-            owner: Owner of device
-            device_type: Type of device (phone, laptop, etc.)
-            vendor: Device manufacturer
-            count_for_presence: Whether to count this device for presence detection
-            confirmation_status: Whether device has been confirmed by a user
-        
+            mac: Unique device identifier
+            name: Human-readable device name
+            owner: Person associated with the device
+            device_type: Classification for presence inference
+            vendor: Manufacturer information
+            count_for_presence: Whether to include in occupancy calculation
+            confirmation_status: User verification state
+            
         Returns:
-            bool: Success status
+            bool: Success indicator
         """
         with self._lock:
             mac = mac.lower()
@@ -477,14 +489,14 @@ class DeviceManager:
 
     def link_device_to_telegram_user(self, mac: str, telegram_user_id: int) -> bool:
         """
-        Link a device to a Telegram user for ping functionality.
+        Associate device with Telegram user for interactive verification.
         
         Args:
-            mac: MAC address of device
-            telegram_user_id: Telegram user ID
-        
+            mac: Device identifier
+            telegram_user_id: Telegram user identifier
+            
         Returns:
-            bool: Success status
+            bool: Success indicator
         """
         with self._lock:
             mac = mac.lower()
@@ -502,13 +514,13 @@ class DeviceManager:
 
     def unlink_device_from_telegram_user(self, mac: str) -> bool:
         """
-        Unlink a device from its Telegram user.
+        Remove Telegram association from device.
         
         Args:
-            mac: MAC address of device
-        
+            mac: Device identifier
+            
         Returns:
-            bool: Success status
+            bool: Success indicator
         """
         with self._lock:
             mac = mac.lower()
@@ -525,15 +537,20 @@ class DeviceManager:
         return True
 
     def set_notification_callback(self, callback):
-        """Set or update the notification callback function."""
+        """Register function to be called when significant device events occur."""
         self.notification_callback = callback
 
     def calculate_people_present(self):
         """
-        Calculate number of people present with enhanced reliability.
+        Estimate the number of people currently present in the monitored space.
+        
+        Uses a multi-stage algorithm:
+        1. Count active/probable phones with owners (1 person per owner)
+        2. Verify inactive phones with ping for improved reliability
+        3. Count active/probable phones without owners (1 person per device)
         
         Returns:
-            int: Estimated number of people present
+            int: Estimated occupancy count
         """
         with self._lock:
             people_count = 0

@@ -15,7 +15,7 @@ class UserPreference:
     co2_threshold: int = 1000
     humidity_min: float = 30.0
     humidity_max: float = 60.0
-    sensitivity_temp: float = 1.0  # 1.0 = normal sensitivity, 0.5 = less sensitive, 2.0 = more sensitive
+    sensitivity_temp: float = 1.0  # Normal (1.0), reduced (0.5), or enhanced (2.0) sensitivity
     sensitivity_co2: float = 1.0
     sensitivity_humidity: float = 1.0
     created_at: str = None
@@ -53,7 +53,7 @@ class UserPreference:
             self.temp_min = min(self.temp_min + adjustment, 30.0)
             self.temp_max = max(self.temp_max, self.temp_min + 1.0)
         elif feedback_type == "comfortable" and self.temp_min < current_temp < self.temp_max:
-            # Slightly expand comfort zone when user reports comfort
+            # Expand comfort zone when user is satisfied with current conditions
             range_adjustment = 0.2
             self.temp_min = max(self.temp_min - range_adjustment, 15.0)
             self.temp_max = min(self.temp_max + range_adjustment, 30.0)
@@ -65,7 +65,7 @@ class UserPreference:
         if feedback_type == "stuffy":
             self.co2_threshold = max(self.co2_threshold - adjustment, 400)
         elif feedback_type == "comfortable" and current_co2 <= self.co2_threshold:
-            # If comfortable at current level, allow slightly higher threshold
+            # Increase threshold when user is comfortable with current CO2 levels
             self.co2_threshold = min(self.co2_threshold + adjustment, 1500)
     
     def adjust_humidity_preference(self, feedback_type, current_humidity):
@@ -79,7 +79,7 @@ class UserPreference:
             self.humidity_max = max(self.humidity_max - adjustment, 20.0)
             self.humidity_min = min(self.humidity_min, self.humidity_max - 5.0)
         elif feedback_type == "comfortable" and self.humidity_min < current_humidity < self.humidity_max:
-            # Slightly expand comfort zone when user reports comfort
+            # Expand acceptable humidity range when user is comfortable
             range_adjustment = 2.0
             self.humidity_min = max(self.humidity_min - range_adjustment, 10.0)
             self.humidity_max = min(self.humidity_max + range_adjustment, 80.0)
@@ -90,8 +90,8 @@ class FeedbackRecord:
     """Record of user comfort feedback."""
     user_id: int
     timestamp: str
-    feedback_type: str  # "comfortable", "too_hot", "too_cold", "stuffy", "too_dry", "too_humid"
-    sensor_data: dict   # snapshot of sensor data at the time
+    feedback_type: str  # Comfort states: comfortable, too_hot, too_cold, stuffy, too_dry, too_humid
+    sensor_data: dict   # Environmental conditions at feedback time
     
     def __post_init__(self):
         if not self.timestamp:
@@ -109,18 +109,17 @@ class FeedbackRecord:
 
 @dataclass
 class CompromisePreference:
-    """Calculated compromise preference based on multiple users."""
+    """Calculated compromise preference based on multiple users' comfort needs."""
     user_count: int
     temp_min: float
     temp_max: float
     co2_threshold: int
     humidity_min: float
     humidity_max: float
-    effectiveness_score: float  # How well this compromise suits all users (0.0-1.0)
+    effectiveness_score: float  # Satisfaction metric from 0.0 (poor) to 1.0 (ideal)
     
     def to_dict(self):
         """Convert compromise preference to dictionary."""
         return asdict(self)
 
 
-        

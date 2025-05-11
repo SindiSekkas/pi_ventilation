@@ -6,34 +6,32 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any
 
-from config.settings import OCCUPANCY_HISTORY_FILE # Added import
+from config.settings import OCCUPANCY_HISTORY_FILE
 
 logger = logging.getLogger(__name__)
 
 class OccupancyHistoryManager:
-    """Manages logging of occupancy status changes to CSV file."""
+    """Records and retrieves occupancy state changes for analysis and reporting."""
 
-    def __init__(self, data_dir: str = "data"): # data_dir is no longer used directly for csv_file
+    def __init__(self, data_dir: str = "data"):
         """
         Initialize the occupancy history manager.
 
         Args:
-            data_dir: Directory to store occupancy history data (remains for potential other uses)
+            data_dir: Legacy parameter maintained for compatibility
         """
-        self.data_dir = data_dir # Retain for other potential uses if any
-        self.csv_file = OCCUPANCY_HISTORY_FILE # Use the path from settings
-
-        # Create directories if needed
-        # The directory creation should be handled by ensuring OCCUPANCY_HISTORY_DIR exists
-        # or by creating it based on os.path.dirname(self.csv_file)
+        self.data_dir = data_dir
+        self.csv_file = OCCUPANCY_HISTORY_FILE
+        
+        # Ensure parent directory exists
         csv_dir = os.path.dirname(self.csv_file)
         os.makedirs(csv_dir, exist_ok=True)
 
-        # Initialize CSV file with headers if it doesn't exist
+        # Set up storage if needed
         self._initialize_csv()
 
     def _initialize_csv(self):
-        """Initialize CSV file with headers if it doesn't exist."""
+        """Create CSV file with headers if it doesn't exist."""
         if not os.path.exists(self.csv_file):
             try:
                 with open(self.csv_file, 'w', newline='') as f:
@@ -45,12 +43,12 @@ class OccupancyHistoryManager:
 
     def record_occupancy_change(self, status: str, people_count: int, timestamp: datetime = None):
         """
-        Record an occupancy status change.
+        Log an occupancy state transition.
 
         Args:
-            status: Status ('EMPTY' or 'OCCUPIED')
-            people_count: Number of people currently present
-            timestamp: Timestamp of the change (default: now)
+            status: Current state ('EMPTY' or 'OCCUPIED')
+            people_count: Number of detected occupants
+            timestamp: Event time (defaults to current time)
         """
         if status not in ['EMPTY', 'OCCUPIED']:
             logger.error(f"Invalid occupancy status: {status}")
@@ -73,13 +71,13 @@ class OccupancyHistoryManager:
 
     def get_history(self, days: int = 30):
         """
-        Get occupancy history for the specified number of days.
+        Retrieve occupancy records for the specified time period.
 
         Args:
-            days: Number of days of history to retrieve
-
+            days: History window in days
+            
         Returns:
-            list: List of occupancy records
+            list: Chronological occupancy records within the time window
         """
         try:
             records = []

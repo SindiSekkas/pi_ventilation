@@ -11,18 +11,17 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
-# Define state and action enums
 class CO2Level(Enum):
-    """CO2 concentration levels."""
-    LOW = "low"       # Good air quality
-    MEDIUM = "medium" # Acceptable air quality
-    HIGH = "high"     # Poor air quality
+    """CO₂ concentration categories."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
 
 class TemperatureLevel(Enum):
-    """Temperature levels."""
-    LOW = "low"          # < 20°C
-    MEDIUM = "medium"    # 20-24°C
-    HIGH = "high"        # > 24°C
+    """Indoor temperature categories."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
 
 class TimeOfDay(Enum):
     """Time of day periods."""
@@ -37,7 +36,7 @@ class Occupancy(Enum):
     OCCUPIED = "occupied"  # At least one person
 
 class Action(Enum):
-    """Ventilation actions."""
+    """Possible ventilation commands."""
     TURN_OFF = "off"
     TURN_ON_LOW = "low"
     TURN_ON_MEDIUM = "medium"
@@ -45,9 +44,11 @@ class Action(Enum):
 
 
 class MarkovController:
-    """Markov Decision Process based ventilation controller."""
-    
-    # Constants for dynamic exploration rate
+    """
+    Uses a Markov Decision Process to choose ventilation settings.
+    Balances air‐quality rewards and energy costs under varying states.
+    """
+
     MIN_EXPLORATION_RATE = 0.01
     MAX_EXPLORATION_RATE = 0.5
     
@@ -56,12 +57,12 @@ class MarkovController:
         Initialize the Markov controller.
         
         Args:
-            data_manager: Data manager instance for sensor readings
-            pico_manager: Pico manager for controlling ventilation
-            preference_manager: Preference manager for user preferences (optional)
-            model_dir: Directory to store the Markov model
-            scan_interval: How often to check conditions (seconds)
-            occupancy_analyzer: OccupancyPatternAnalyzer for pattern-based predictions
+            data_manager: Provides latest sensor readings.
+            pico_manager: Interface to ventilation hardware.
+            preference_manager: Manages user comfort preferences.
+            model_dir: Path to store model files.
+            scan_interval: Poll interval (seconds).
+            occupancy_analyzer: Predicts occupancy patterns if available.
         """
         self.data_manager = data_manager
         self.pico_manager = pico_manager
@@ -134,7 +135,7 @@ class MarkovController:
         self.learning_rate = 0.1  # How quickly model adapts to new information
         self._base_exploration_rate = 0.2  # Base chance of trying random action (renamed from exploration_rate)
         self.random_action_decay = 0.9999  # Decay rate for exploration
-        self.last_best_value = float('-inf') # ADDED THIS LINE
+        self.last_best_value = float('-inf')
         
         # Night mode settings
         self.night_mode_enabled = True
@@ -151,7 +152,7 @@ class MarkovController:
         self.transition_model = self._load_or_initialize_model()
     
     def _load_night_mode_settings(self):
-        """Load night mode settings from file."""
+        """Retrieve night‐mode configuration from JSON or use defaults."""
         night_settings_file = os.path.join(self.model_dir, "night_mode_settings.json")
         try:
             if os.path.exists(night_settings_file):
@@ -165,7 +166,7 @@ class MarkovController:
             logger.error(f"Error loading night mode settings: {e}")
     
     def _save_night_mode_settings(self):
-        """Save night mode settings to file."""
+        """Persist night‐mode configuration to JSON."""
         night_settings_file = os.path.join(self.model_dir, "night_mode_settings.json")
         try:
             settings = {
@@ -285,7 +286,7 @@ class MarkovController:
         return model
         
     def _normalize_model(self, model):
-        """Normalize transition probabilities to sum to 1."""
+        """Ensure each action’s outgoing probabilities sum to 1."""
         for state in model:
             for action in model[state]:
                 total = sum(model[state][action].values())
@@ -452,8 +453,8 @@ class MarkovController:
     
     def _update_thresholds_for_occupancy(self, occupants):
         """
-        Update thresholds based on current occupancy level.
-        
+        Adjust controller thresholds in place when occupancy changes.
+
         Args:
             occupants: Number of people currently in the room
         """
@@ -613,7 +614,7 @@ class MarkovController:
                 time_until_return = next_return - datetime.now()
                 if timedelta(minutes=30) <= time_until_return <= timedelta(minutes=60):
                     co2 = self.data_manager.latest_data["scd41"]["co2"]
-                    if co2 and co2 > active_co2_thr.get("medium_max", 1100): # Use .get for safety
+                    if co2 and co2 > active_co2_thr.get("medium_max", 1100):
                         current_status = self.pico_manager.get_ventilation_status()
                         current_speed = self.pico_manager.get_ventilation_speed()
                         if not current_status or current_speed == Action.TURN_ON_LOW.value:
@@ -747,7 +748,7 @@ class MarkovController:
                 elif action_key_str == Action.TURN_ON_MEDIUM.value:
                     energy_cost = -0.3 
                 elif action_key_str == Action.TURN_ON_LOW.value:
-                    energy_cost = -0.25 # Updated penalty for low speed
+                    energy_cost = -0.25
 
                 current_state_value = co2_reward + temp_reward + occupancy_reward + energy_cost
                 
@@ -764,7 +765,7 @@ class MarkovController:
                 best_value = action_total_expected_value
                 best_action = action_key_str
         
-        logger.debug(f"DEBUG: All action values (before potential overrides): {action_values_debug}") # MODIFIED THIS LINE
+        logger.debug(f"DEBUG: All action values (before potential overrides): {action_values_debug}")
 
         # Apply state-aware risk weighting - prioritize certain factors based on context
         if self.current_state: # Ensure current_state is not None
@@ -820,10 +821,10 @@ class MarkovController:
         # Apply new dynamic exploration rate calculation
         self._base_exploration_rate *= self.random_action_decay
         
-        self.last_best_value = best_value # ADDED THIS LINE
+        self.last_best_value = best_value
         logger.info(f"Selected action: {best_action} for state: {self.current_state} (best_value: {best_value:.2f}, exploration_rate: {current_exploration_rate:.3f})")
         # Log active thresholds for context
-        log_active_co2_thr, log_active_temp_thr = self._get_current_target_thresholds(current_occupants) # Re-fetch for logging consistency
+        log_active_co2_thr, log_active_temp_thr = self._get_current_target_thresholds(current_occupants)
         logger.info(f"Using thresholds - CO2: {log_active_co2_thr}, Temp: {log_active_temp_thr}")
         
         return best_action
@@ -870,7 +871,7 @@ class MarkovController:
         Low confidence -> higher exploration (modifier > 1.0)
         
         Returns:
-            float: Confidence modifier
+            float: Confidence‐based multiplier.
         """
         if not self.current_state or self.current_state not in self.transition_model:
             return 1.0  # Default modifier
@@ -929,12 +930,10 @@ class MarkovController:
     
     def _calculate_current_state_value_modifier(self):
         """
-        Calculate modifier based on current state value.
-        Good state -> more exploration allowed (modifier > 1.0)
-        Bad state -> less exploration (modifier < 1.0)
-        
+        Scale exploration by current state comfort quality.
+
         Returns:
-            float: State value modifier
+            float: State quality multiplier.
         """
         current_occupants = self.data_manager.latest_data["room"]["occupants"]
         co2 = self.data_manager.latest_data["scd41"]["co2"]
@@ -984,12 +983,10 @@ class MarkovController:
     
     def _calculate_preference_effectiveness_modifier(self):
         """
-        Calculate modifier based on how well current preferences satisfy users.
-        Low effectiveness -> more exploration needed (modifier > 1.0)
-        High effectiveness -> current settings work well (modifier < 1.0)
-        
+        Adjust exploration based on how well current settings match preferences.
+
         Returns:
-            float: Preference effectiveness modifier
+            float: Preference‐effectiveness multiplier.
         """
         if not self.preference_manager:
             return 1.0  # No preference manager available
@@ -1024,13 +1021,13 @@ class MarkovController:
     
     def _execute_action(self, action):
         """
-        Execute the selected action.
-        
+        Send command to ventilation hardware if it differs from current state.
+
         Args:
-            action: Action key
-            
+            action: Target action key.
+
         Returns:
-            bool: Success status
+            bool: True if command succeeded or was already set.
         """
         current_status = self.pico_manager.get_ventilation_status()
         current_speed = self.pico_manager.get_ventilation_speed()
@@ -1054,13 +1051,13 @@ class MarkovController:
     
     def _update_model(self, previous_state, action, current_state, reward=None):
         """
-        Update the transition model based on observed state transition.
-        
+        Incorporate observed transition into MDP, apply learning rate, and renormalize.
+
         Args:
-            previous_state: Previous state key
-            action: Action taken
-            current_state: Resulting state key
-            reward: Optional reward value for this transition (not used currently)
+            previous_state: State before action.
+            action: Action taken.
+            current_state: Resulting state.
+            reward: Optional external reward (unused).
         """
         try:
             # Check if states and action exist in model
@@ -1144,8 +1141,17 @@ class MarkovController:
             "active_thresholds": "empty_home" if occupants == 0 else "compromise"
         }
     
-    def set_thresholds(self, co2_low_max=None, co2_medium_max=None, temp_low_max=None, temp_medium_max=None):
-        """Update threshold settings."""
+    def set_thresholds(self, co2_low_max=None, co2_medium_max=None,
+                       temp_low_max=None, temp_medium_max=None):
+        """
+        Update manual CO₂ and temperature threshold overrides.
+
+        Args:
+            co2_low_max: Upper bound for CO₂ LOW category.
+            co2_medium_max: Upper bound for CO₂ MEDIUM category.
+            temp_low_max: Upper bound for temperature LOW category.
+            temp_medium_max: Upper bound for temperature MEDIUM category.
+        """
         if co2_low_max is not None:
             self.co2_thresholds["low_max"] = co2_low_max
         if co2_medium_max is not None:

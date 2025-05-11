@@ -1,5 +1,5 @@
 # preferences/preference_manager.py
-"""Preference manager for user ventilation preferences."""
+"""Preference manager for ventilation system user settings."""
 import os
 import json
 import logging
@@ -12,29 +12,29 @@ logger = logging.getLogger(__name__)
 
 
 class PreferenceManager:
-    """Manages user preferences for ventilation settings."""
+    """Manages user comfort preferences and calculates optimal ventilation settings."""
     
     def __init__(self, data_dir: str = "data"):
         """
         Initialize preference manager.
         
         Args:
-            data_dir: Directory to store preference data
+            data_dir: Base directory for storing preference and feedback data
         """
         self.data_dir = data_dir
         self.preference_dir = os.path.join(data_dir, "preferences")
         self.preferences_file = os.path.join(self.preference_dir, "user_preferences.json")
         self.feedback_file = os.path.join(self.preference_dir, "user_feedback.json")
         
-        # Create directory if not exists
+        # Create directory structure
         os.makedirs(self.preference_dir, exist_ok=True)
         
-        # Load existing preferences and feedback
+        # Initialize data from storage
         self.preferences = self._load_preferences()
         self.feedback_history = self._load_feedback()
     
     def _load_preferences(self) -> Dict[int, UserPreference]:
-        """Load preferences from file."""
+        """Load user preferences from persistent storage."""
         if os.path.exists(self.preferences_file):
             try:
                 with open(self.preferences_file, 'r') as f:
@@ -115,13 +115,18 @@ class PreferenceManager:
     
     def calculate_compromise_preference(self, list_of_user_ids: List[int]) -> CompromisePreference:
         """
-        Calculate compromise preferences for a group of users using an optimized approach.
+        Calculate optimal settings that balance multiple users' comfort needs.
+        
+        This uses a multi-step algorithm:
+        1. Find preference range intersections where all users are comfortable
+        2. When no intersection exists, calculate weighted averages based on sensitivity
+        3. Compute an effectiveness score measuring how well needs are balanced
         
         Args:
-            list_of_user_ids: List of user IDs to calculate compromise for
+            list_of_user_ids: Users to consider in the calculation
             
         Returns:
-            CompromisePreference: Calculated compromise settings
+            CompromisePreference: Balanced settings for the group
         """
         if not list_of_user_ids:
             # Return default preferences if no users
@@ -204,7 +209,15 @@ class PreferenceManager:
         )
     
     def _find_range_intersection(self, ranges: List[tuple]) -> tuple:
-        """Find intersection of multiple ranges."""
+        """
+        Find overlapping range that satisfies all user preferences.
+        
+        Args:
+            ranges: List of (min, max) value tuples
+            
+        Returns:
+            tuple: Intersection range or None if no overlap
+        """
         if not ranges:
             return None
         
@@ -219,7 +232,15 @@ class PreferenceManager:
         return None
     
     def _calculate_weighted_range(self, preferences: List[tuple]) -> tuple:
-        """Calculate weighted average range with sensitivity."""
+        """
+        Calculate weighted range considering user sensitivity preferences.
+        
+        Args:
+            preferences: List of (min, max, sensitivity) tuples
+            
+        Returns:
+            tuple: Calculated (min, max) range
+        """
         if not preferences:
             return (0, 0)
         
@@ -239,7 +260,15 @@ class PreferenceManager:
         return (weighted_min, weighted_max)
     
     def _calculate_weighted_average(self, values_with_weights: List[tuple]) -> float:
-        """Calculate weighted average."""
+        """
+        Compute weighted average where values with higher weights have more influence.
+        
+        Args:
+            values_with_weights: List of (value, weight) tuples
+            
+        Returns:
+            float: Weighted average
+        """
         if not values_with_weights:
             return 0
         
@@ -254,7 +283,21 @@ class PreferenceManager:
                                      temp_min: float, temp_max: float,
                                      co2_threshold: int,
                                      humidity_min: float, humidity_max: float) -> float:
-        """Calculate how effective the compromise is for all users."""
+        """
+        Measure how well the compromise satisfies all users' preferences.
+        
+        Lower dissatisfaction scores indicate better compromises. The score is
+        normalized to a 0-1 scale where 1 represents ideal satisfaction.
+        
+        Args:
+            preferences: List of user preference objects
+            temp_min/max: Calculated temperature range
+            co2_threshold: Calculated CO2 threshold
+            humidity_min/max: Calculated humidity range
+            
+        Returns:
+            float: Satisfaction score from 0.0 (poor) to 1.0 (ideal)
+        """
         if not preferences:
             return 1.0
         
@@ -312,7 +355,14 @@ class PreferenceManager:
         return max(0.0, min(1.0, effectiveness))
     
     def add_feedback(self, user_id: int, feedback_type: str, sensor_data: Dict):
-        """Add user feedback record."""
+        """
+        Record user comfort feedback for preference learning and history.
+        
+        Args:
+            user_id: User providing feedback
+            feedback_type: Comfort state (comfortable, too_hot, etc.)
+            sensor_data: Environmental conditions at feedback time
+        """
         feedback = FeedbackRecord(
             user_id=user_id,
             feedback_type=feedback_type,

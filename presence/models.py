@@ -1,10 +1,10 @@
 # presence/models.py
-"""Models for presence detection system."""
+"""Network device presence detection models for the ventilation system."""
 from enum import Enum
 from datetime import datetime, time
 
 class DeviceType(Enum):
-    """Device type classification."""
+    """Classification of network-connected devices."""
     PHONE = "phone"
     LAPTOP = "laptop"
     TABLET = "tablet"
@@ -13,26 +13,26 @@ class DeviceType(Enum):
     UNKNOWN = "unknown"
 
 class ConfirmationStatus(Enum):
-    """Device confirmation status."""
-    UNCONFIRMED = "unconfirmed"  # Newly discovered, not yet confirmed
-    CONFIRMED = "confirmed"      # Confirmed by user
-    IGNORED = "ignored"          # User chose to ignore this device
+    """Status indicating whether a device has been verified by a user."""
+    UNCONFIRMED = "unconfirmed"  # Newly discovered device
+    CONFIRMED = "confirmed"      # User-verified device
+    IGNORED = "ignored"          # Explicitly excluded device
 
 class ConnectionEvent:
-    """Represents a connection or disconnection event."""
+    """Network connection or disconnection event with timestamp."""
     def __init__(self, event_type, timestamp=None):
         """
-        Initialize a connection event.
+        Create a new connection event.
         
         Args:
-            event_type: Type of event ("connect" or "disconnect")
-            timestamp: When the event occurred (default: now)
+            event_type: Event classification ("connect" or "disconnect")
+            timestamp: Event occurrence time (defaults to current time)
         """
         self.event_type = event_type
         self.timestamp = timestamp or datetime.now()
     
     def to_dict(self):
-        """Convert to dictionary."""
+        """Convert event to serializable dictionary."""
         return {
             "type": self.event_type,
             "timestamp": self.timestamp.isoformat()
@@ -51,21 +51,21 @@ class ConnectionEvent:
             return cls(data.get("type", "unknown"))
 
 class Device:
-    """Represents a network device for presence detection."""
+    """Network device with presence detection capabilities."""
     
     def __init__(self, mac, name=None, owner=None, device_type=DeviceType.UNKNOWN.value, 
                 vendor=None, count_for_presence=None, confirmation_status=ConfirmationStatus.UNCONFIRMED.value):
         """
-        Initialize a device.
+        Create a new device.
         
         Args:
-            mac: MAC address of device
-            name: Name of device
-            owner: Owner of device
-            device_type: Type of device (phone, laptop, etc.)
-            vendor: Device manufacturer
-            count_for_presence: Whether to count this device for presence detection
-            confirmation_status: Whether device has been confirmed by a user
+            mac: Device MAC address (unique identifier)
+            name: User-friendly device name
+            owner: Person associated with this device
+            device_type: Category of device
+            vendor: Manufacturer name
+            count_for_presence: Whether device indicates occupancy
+            confirmation_status: User verification status
         """
         self.mac = mac.lower()
         self.name = name or f"Device-{mac[-5:]}"
@@ -73,75 +73,79 @@ class Device:
         self.device_type = device_type
         self.vendor = vendor or "Unknown"
         
-        # Automatically count phones for presence
+        # Phones are automatically used for presence detection
         if count_for_presence is None:
             count_for_presence = (device_type == DeviceType.PHONE.value)
         self.count_for_presence = count_for_presence
         
         self.confirmation_status = confirmation_status
         
-        # Timing information
+        # Connection timing data
         self.last_seen = None
         self.first_seen = datetime.now().isoformat()
         
-        # Presence detection parameters
+        # Network state tracking
         self.connection_history = []
         self.offline_count = 0
         self.status = "inactive"
         
-        # Advanced presence features
-        self.confidence_score = 0.5  # Default: medium confidence
-        self.typical_active_hours = []  # Store times when device is typically active
+        # Probabilistic presence features
+        self.confidence_score = 0.5  # Confidence level (0.0-1.0)
+        self.typical_active_hours = []  # Expected online periods [(start_hour, end_hour),...]
     
-        # Wake-on-LAN support
-        self.supports_wol = False  # Whether device supports Wake-on-LAN
-        self.last_ip = None  # Last known IP address
-        self.wol_success_count = 0  # Count of successful wake attempts
-        self.wol_failure_count = 0  # Count of failed wake attempts
+        # Remote management capabilities
+        self.supports_wol = False
+        self.last_ip = None
+        self.wol_success_count = 0
+        self.wol_failure_count = 0
         
-        # Telegram ping support
-        self.telegram_user_id = None  # ID of Telegram user associated with this device
-        self.last_telegram_ping_request_time = None  # Timestamp of last Telegram ping request
-        self.is_pending_telegram_ping = False  # Flag for pending Telegram ping result
+        # Interactive verification
+        self.telegram_user_id = None
+        self.last_telegram_ping_request_time = None
+        self.is_pending_telegram_ping = False
     
     def record_connection(self):
-        """Record a connection event."""
+        """Log device connection with current timestamp."""
         now = datetime.now()
         self.last_seen = now.isoformat()
         self.connection_history.append(ConnectionEvent("connect").to_dict())
         
-        # Trim history if needed
+        # Maintain reasonable history size
         if len(self.connection_history) > 100:
             self.connection_history = self.connection_history[-100:]
     
     def record_disconnection(self):
-        """Record a disconnection event."""
+        """Log device disconnection with current timestamp."""
         self.connection_history.append(ConnectionEvent("disconnect").to_dict())
         
-        # Trim history if needed
+        # Maintain reasonable history size
         if len(self.connection_history) > 100:
             self.connection_history = self.connection_history[-100:]
     
     def is_probably_present(self, current_time=None):
         """
-        Determine if the device is probably present even if currently offline.
-        Uses time-weighted probability based on connection history.
+        Estimate likelihood of user presence despite device being offline.
         
+        Uses temporal patterns and recent connectivity history to make
+        an informed prediction about occupancy.
+        
+        Args:
+            current_time: Reference time (defaults to now)
+            
         Returns:
-            bool: True if device is probably present
+            bool: True if user is likely present
         """
         if self.status == "active":
             return True
         
-        # If it's a phone and we've seen it recently
+        # Consider recent phone connectivity as strong presence indicator
         if (self.device_type == DeviceType.PHONE.value and 
             self.last_seen and 
             self.count_for_presence):
             
-            # Use current time or default to now
             now = current_time or datetime.now()
             
-            # Check if the current time is within typical active hours
+            # Check if within typical usage hours
             current_hour = now.hour
             is_typical_active_hour = False
             
@@ -151,7 +155,7 @@ class Device:
                     is_typical_active_hour = True
                     break
             
-            # If last seen was within the past hour and we're in active hours
+            # Recent activity during expected hours suggests presence
             try:
                 last_seen_time = datetime.fromisoformat(self.last_seen)
                 time_since_last_seen = (now - last_seen_time).total_seconds() / 60  # minutes
@@ -164,7 +168,7 @@ class Device:
         return False
     
     def to_dict(self):
-        """Convert device to dictionary for serialization."""
+        """Convert to serializable dictionary representation."""
         return {
             "mac": self.mac,
             "name": self.name,
@@ -190,7 +194,7 @@ class Device:
         
     @classmethod
     def from_dict(cls, data):
-        """Create device from dictionary."""
+        """Reconstruct device from dictionary representation."""
         if not data or "mac" not in data:
             return None
             

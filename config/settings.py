@@ -32,7 +32,7 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 CSV_DIR = os.path.join(DATA_DIR, "csv")
 
 # Occupancy history paths
-OCCUPANCY_HISTORY_DIR = os.path.join(DATA_DIR, "occupancy_history")  # Changed from "occupancy" to "occupancy_history" to match existing structure
+OCCUPANCY_HISTORY_DIR = os.path.join(DATA_DIR, "occupancy_history") 
 OCCUPANCY_HISTORY_FILE = os.path.join(OCCUPANCY_HISTORY_DIR, "occupancy_history.csv")
 OCCUPANCY_PROBABILITIES_FILE = os.path.join(OCCUPANCY_HISTORY_DIR, "occupancy_probabilities.json")
 
