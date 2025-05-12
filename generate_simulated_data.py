@@ -18,7 +18,7 @@ logger = logging.getLogger("data_generator")
 # === SIMULATION PARAMETERS ===
 SIMULATION_DAYS = 90
 TIME_STEP_MINUTES = 2
-MAX_OCCUPANTS = 2
+MAX_OCCUPANTS = 4
 OUTPUT_FILE = "simulated_ventilation_history.csv"
 
 # CO2 dynamics - adjusted for less frequent ventilation
@@ -44,10 +44,10 @@ TEMP_RISE_RATE = 0.1  # °C per hour ambient rise (heating)
 TEMP_RISE_PER_PERSON = 0.05  # Additional °C per hour per person
 
 # Ventilation thresholds
-CO2_THRESHOLD_HIGH = 1200     # ppm - high threshold
-CO2_THRESHOLD_MEDIUM = 950    # ppm - medium threshold
+CO2_THRESHOLD_HIGH = 1500     # ppm - high threshold
+CO2_THRESHOLD_MEDIUM = 1200    # ppm - medium threshold
 CO2_THRESHOLD_LOW = 800       # ppm - low threshold
-TEMP_THRESHOLD_HIGH = 25.0    # °C - high temperature
+TEMP_THRESHOLD_HIGH = 23.0    # °C - high temperature
 
 # Occupancy management
 MIN_OCCUPANCY_DURATION = 180  # minutes (3 hours)
