@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from telegram import Bot
-from utils.network_scanner import scan_network
+from utils.network_scanner import scan_network # Убедитесь, что scan_network импортирован
 from presence.device_manager import DeviceManager
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,9 @@ async def telegram_ping_worker(bot: Bot, device_manager: DeviceManager, telegram
             except Exception as e:
                 logger.error(f"Failed to send Telegram ping to user {telegram_user_id}: {e}")
                 # Report failure to DeviceManager if the ping message couldn't be sent.
-                device_manager.process_telegram_ping_result(mac, False)
+                # Ensure device_manager is not None before calling
+                if device_manager:
+                    device_manager.process_telegram_ping_result(mac, False)
                 telegram_ping_queue.task_done() # Ensure the task is marked as completed in the queue.
                 continue # Proceed to the next task.
             
@@ -75,28 +77,26 @@ async def telegram_ping_worker(bot: Bot, device_manager: DeviceManager, telegram
             # Perform a network scan to check if the device is now present.
             try:
                 detected_after_ping = False
-                if ip_address:
-                    # If a specific IP is known, target the scan for efficiency.
-                    scan_results = scan_network(target_ip=ip_address)
-                else:
-                    # Otherwise, perform a broader scan of the network.
-                    # Right now only arp scan is supported.
-                    scan_results = scan_network()
+                loop = asyncio.get_event_loop() # Получаем текущий event loop
                 
-                for device_mac, device_ip, _ in scan_results:
+                scan_results = await loop.run_in_executor(None, scan_network, ip_address)
+                
+                for device_mac, device_ip_found, _ in scan_results:
                     if device_mac.lower() == mac.lower():
                         detected_after_ping = True
-                        logger.info(f"Device {mac} detected on network after Telegram ping (IP: {device_ip})")
+                        logger.info(f"Device {mac} detected on network after Telegram ping (IP: {device_ip_found})")
                         break # Device found.
                 
                 logger.debug(f"Post-ping scan result for {mac}: detected={detected_after_ping}")
                 # Report the outcome of the ping and scan attempt to the DeviceManager.
-                device_manager.process_telegram_ping_result(mac, detected_after_ping)
+                if device_manager:
+                    device_manager.process_telegram_ping_result(mac, detected_after_ping)
                 
             except Exception as e:
                 logger.error(f"Error during post-ping scan for {mac}: {e}")
                 # Report failure if the scan itself encounters an error.
-                device_manager.process_telegram_ping_result(mac, False)
+                if device_manager:
+                    device_manager.process_telegram_ping_result(mac, False)
             
             # Indicate that processing for this task is complete.
             telegram_ping_queue.task_done()

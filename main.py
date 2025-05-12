@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 # Import components
 from config.settings import (
     MEASUREMENT_INTERVAL, INIT_MEASUREMENTS, 
-    PICO_IP, DATA_DIR, CSV_DIR, BOT_TOKEN
+    PICO_IP, DATA_DIR, CSV_DIR, BOT_TOKEN,
+    MARKOV_ENABLE_EXPLORATION 
 )
 from sensors.scd41_manager import SCD41Manager
 from sensors.bmp280 import BMP280
@@ -128,7 +129,8 @@ def main():
             data_manager=data_manager,
             pico_manager=pico_manager,
             preference_manager=preference_manager,
-            occupancy_analyzer=occupancy_pattern_analyzer
+            occupancy_analyzer=occupancy_pattern_analyzer,
+            enable_exploration=MARKOV_ENABLE_EXPLORATION 
         )
         
         # Start Markov controller

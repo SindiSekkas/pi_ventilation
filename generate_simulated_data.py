@@ -16,7 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger("data_generator")
 
 # === SIMULATION PARAMETERS ===
-SIMULATION_DAYS = 7
+SIMULATION_DAYS = 90
 TIME_STEP_MINUTES = 2
 MAX_OCCUPANTS = 2
 OUTPUT_FILE = "simulated_ventilation_history.csv"

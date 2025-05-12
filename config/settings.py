@@ -26,6 +26,9 @@ NIGHT_MODE_ENABLED = True  # Enable night mode by default
 NIGHT_MODE_START_HOUR = 23  # 11 PM
 NIGHT_MODE_END_HOUR = 7     # 7 AM
 
+# Markov Controller settings
+MARKOV_ENABLE_EXPLORATION = False  # Enable random actions for exploration
+
 # Directories
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -37,7 +40,7 @@ OCCUPANCY_HISTORY_FILE = os.path.join(OCCUPANCY_HISTORY_DIR, "occupancy_history.
 OCCUPANCY_PROBABILITIES_FILE = os.path.join(OCCUPANCY_HISTORY_DIR, "occupancy_probabilities.json")
 
 # Skip initialisation measurements
-SKIP_INITIALIZATION = False
+SKIP_INITIALIZATION = True
 INIT_MEASUREMENTS = 0 if SKIP_INITIALIZATION else 5
 
 # Bot configuration

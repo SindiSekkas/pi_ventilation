@@ -52,7 +52,7 @@ class MarkovController:
     MIN_EXPLORATION_RATE = 0.01
     MAX_EXPLORATION_RATE = 0.5
     
-    def __init__(self, data_manager, pico_manager, preference_manager=None, model_dir="data/markov", scan_interval=60, occupancy_analyzer=None):
+    def __init__(self, data_manager, pico_manager, preference_manager=None, model_dir="data/markov", scan_interval=60, occupancy_analyzer=None, enable_exploration=True):
         """
         Initialize the Markov controller.
         
@@ -63,6 +63,7 @@ class MarkovController:
             model_dir: Path to store model files.
             scan_interval: Poll interval (seconds).
             occupancy_analyzer: Predicts occupancy patterns if available.
+            enable_exploration: Whether to enable random actions for exploration.
         """
         self.data_manager = data_manager
         self.pico_manager = pico_manager
@@ -70,6 +71,7 @@ class MarkovController:
         self.occupancy_analyzer = occupancy_analyzer  # Store occupancy analyzer
         self.model_dir = model_dir
         self.scan_interval = scan_interval
+        self.enable_exploration = enable_exploration  # Control exploration behavior
         os.makedirs(model_dir, exist_ok=True)
         
         # Control thread
@@ -628,7 +630,8 @@ class MarkovController:
         # Calculate current exploration rate dynamically
         current_exploration_rate = self._calculate_dynamic_exploration_rate()
 
-        if random.random() < current_exploration_rate:
+        # Only perform exploration if enabled
+        if self.enable_exploration and random.random() < current_exploration_rate:
             # Ensure there are actions defined for the current state before choosing randomly
             if self.transition_model.get(self.current_state):
                 random_action = random.choice(list(self.transition_model[self.current_state].keys()))
