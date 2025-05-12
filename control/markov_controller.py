@@ -134,10 +134,17 @@ class MarkovController:
         
         # Control state
         self.auto_mode = True
-        self.learning_rate = 0.1  # How quickly model adapts to new information
-        self._base_exploration_rate = 0.2  # Base chance of trying random action (renamed from exploration_rate)
-        self.random_action_decay = 0.9999  # Decay rate for exploration
-        self.last_best_value = float('-inf')
+        
+        # Q-learning parameters
+        self.learning_rate = 0.1  # Alpha - initial learning rate (0.01-0.5 recommended)
+        self.discount_factor = 0.9  # Gamma - future reward discount (0.9-0.99 recommended)
+        self.exploration_rate = 0.1  # Epsilon - exploration rate (0.1-1.0 recommended)
+        
+        # Decay parameters for Q-learning
+        self.epsilon_decay = 0.995  # Rate at which exploration decreases (0.9-0.999 recommended)
+        self.min_epsilon = 0.01  # Minimum exploration rate (0.01-0.1 recommended)
+        self.alpha_decay = 0.99  # Learning rate decay (0.9-0.999 recommended)
+        self.min_alpha = 0.01  # Minimum learning rate (0.01-0.1 recommended)
         
         # Night mode settings
         self.night_mode_enabled = True
@@ -150,8 +157,9 @@ class MarkovController:
         # Load night mode settings from file
         self._load_night_mode_settings()
         
-        # Load or initialize transition model
-        self.transition_model = self._load_or_initialize_model()
+        # Initialize Q-values and try to load from file
+        self.q_values = {}
+        self.load_q_values(self.model_file)
     
     def _load_night_mode_settings(self):
         """Retrieve night‐mode configuration from JSON or use defaults."""
@@ -181,6 +189,60 @@ class MarkovController:
             logger.info("Saved night mode settings")
         except Exception as e:
             logger.error(f"Error saving night mode settings: {e}")
+    
+    def save_q_values(self, filepath):
+        """
+        Save the Q-values dictionary to a JSON file.
+        
+        Args:
+            filepath: Path where the Q-values will be saved
+            
+        Returns:
+            bool: Success indicator
+        """
+        try:
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+            # Save Q-values
+            with open(filepath, 'w') as f:
+                json.dump(self.q_values, f, indent=2)
+                
+            logger.info(f"Q-values saved to {filepath}")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving Q-values to {filepath}: {e}")
+            return False
+    
+    def load_q_values(self, filepath):
+        """
+        Load Q-values from a JSON file.
+        
+        Args:
+            filepath: Path to the JSON file containing Q-values
+            
+        Returns:
+            bool: Success indicator
+        """
+        if not os.path.exists(filepath):
+            logger.info(f"Q-values file not found at {filepath}. Starting with empty table.")
+            return False
+            
+        try:
+            with open(filepath, 'r') as f:
+                self.q_values = json.load(f)
+                
+            # Count loaded values for logging
+            state_count = len(self.q_values)
+            action_count = sum(len(actions) for actions in self.q_values.values())
+            
+            logger.info(f"Loaded Q-values from {filepath}: {state_count} states, {action_count} state-action pairs")
+            return True
+        except Exception as e:
+            logger.error(f"Error loading Q-values from {filepath}: {e}")
+            # Ensure q_values is initialized as empty dict if loading fails
+            self.q_values = {}
+            return False
     
     def _is_night_mode_active(self):
         """Check if night mode is currently active."""
@@ -223,78 +285,51 @@ class MarkovController:
             "time_of_day": parts[3] if len(parts) > 3 else "day"
         }
     
-    def _load_or_initialize_model(self):
-        """Load existing model or initialize a new one."""
-        if os.path.exists(self.model_file):
-            try:
-                with open(self.model_file, 'r') as f:
-                    model = json.load(f)
-                logger.info(f"Loaded existing Markov model from {self.model_file}")
-                return model
-            except Exception as e:
-                logger.error(f"Error loading Markov model: {e}")
+    def _get_q_value(self, state_key, action):
+        """
+        Safely retrieve the Q-value for a state-action pair.
         
-        # Create a new model
-        model = {}
-        logger.info("Initializing new Markov model")
+        Args:
+            state_key: State identifier
+            action: Action identifier
+            
+        Returns:
+            float: Q-value for the state-action pair (0.0 if not found)
+        """
+        if state_key not in self.q_values:
+            return 0.0
         
-        # Populate model with all state-action combinations
-        for co2 in CO2Level:
-            for temp in TemperatureLevel:
-                for occupancy in Occupancy:
-                    for time_of_day in TimeOfDay:
-                        state_key = self._create_state_key(
-                            co2.value, temp.value, occupancy.value, time_of_day.value
-                        )
-                        
-                        # Initialize actions with probabilities
-                        model[state_key] = {}
-                        
-                        for action in Action:
-                            action_key = action.value
-                            model[state_key][action_key] = {}
-                            
-                            # Initialize next state transitions
-                            for next_co2 in CO2Level:
-                                for next_temp in TemperatureLevel:
-                                    for next_occupancy in Occupancy:
-                                        for next_time in TimeOfDay:
-                                            next_state = self._create_state_key(
-                                                next_co2.value, 
-                                                next_temp.value,
-                                                next_occupancy.value, 
-                                                next_time.value
-                                            )
-                                            
-                                            # Initial probabilities - higher for staying in same state
-                                            if state_key == next_state:
-                                                prob = 0.6
-                                            else:
-                                                prob = 0.0001  # Very small probability for other transitions
-                                            
-                                            model[state_key][action_key][next_state] = prob
+        if action not in self.q_values.get(state_key, {}):
+            return 0.0
         
-        # Normalize probabilities
-        self._normalize_model(model)
+        value = self.q_values[state_key][action]
         
-        # Save the model
-        try:
-            with open(self.model_file, 'w') as f:
-                json.dump(model, f, indent=2)
-            logger.info("Saved initial Markov model")
-        except Exception as e:
-            logger.error(f"Error saving initial model: {e}")
+        # Ensure we return a numeric value
+        if isinstance(value, (int, float)):
+            return value
         
-        return model
+        # If we have a non-numeric value, return 0.0
+        return 0.0
+    
+    def _get_max_q_value(self, state_key):
+        """
+        Find the maximum Q-value across all possible actions for a state.
         
-    def _normalize_model(self, model):
-        """Ensure each action’s outgoing probabilities sum to 1."""
-        for state in model:
-            for action in model[state]:
-                total = sum(model[state][action].values())
-                if total > 0:
-                    for next_state in model[state][action]:
-                        model[state][action][next_state] /= total
+        Args:
+            state_key: State identifier
+            
+        Returns:
+            float: Maximum Q-value for the state (0.0 if state is unknown)
+        """
+        if state_key not in self.q_values or not self.q_values[state_key]:
+            return 0.0
+        
+        # Extract numeric values only, skip non-numeric ones
+        values = [q for q in self.q_values[state_key].values() if isinstance(q, (int, float))]
+        
+        # Return max of numeric values, or 0.0 if none
+        return max(values) if values else 0.0
+
     
     def start(self):
         """Start the Markov controller."""
@@ -365,7 +400,10 @@ class MarkovController:
                     
                     # Update model based on previous state transition (if applicable)
                     if previous_state and self.last_action:
-                        self._update_model(previous_state, self.last_action, self.current_state)
+                        # For simplicity in this sprint, we'll use a default reward
+                        # In a real implementation, reward should be calculated based on state transition
+                        reward = 0.0  # Placeholder for now
+                        self._update_q_value(previous_state, self.last_action, reward, self.current_state)
                 
                 # Wait for next check
                 time.sleep(self.scan_interval)
@@ -598,7 +636,7 @@ class MarkovController:
     
     def _decide_action(self):
         """
-        Decide what action to take based on the current state.
+        Decide what action to take based on the current state using epsilon-greedy policy.
         
         Returns:
             str: Action key
@@ -607,6 +645,7 @@ class MarkovController:
             logger.warning("Current state is None, defaulting to TURN_OFF")
             return Action.TURN_OFF.value
 
+        # Check if occupancy analyzer predicts return soon - special case
         current_occupants = self.data_manager.latest_data["room"]["occupants"]
         active_co2_thr, active_temp_thr = self._get_current_target_thresholds(current_occupants)
 
@@ -622,405 +661,32 @@ class MarkovController:
                         if not current_status or current_speed == Action.TURN_ON_LOW.value:
                             logger.info(f"Pre-arrival ventilation: CO2={co2}, return in {time_until_return}")
                             return Action.TURN_ON_MEDIUM.value
+
+        # Epsilon-greedy exploration strategy
+        if self.enable_exploration and random.random() < self.exploration_rate:
+            # Exploration: choose a random action
+            action = random.choice([a.value for a in Action])
+            logger.info(f"Exploring random action: {action} (exploration_rate={self.exploration_rate:.3f})")
+            return action
         
-        if self.current_state not in self.transition_model:
-            logger.warning(f"Unknown state: {self.current_state}, defaulting to TURN_OFF")
+        # Exploitation: choose action with highest Q-value
+        action_q_values = {}
+        for action in [a.value for a in Action]:
+            action_q_values[action] = self._get_q_value(self.current_state, action)
+        
+        if not action_q_values:
+            logger.warning(f"No Q-values found for state {self.current_state}, defaulting to TURN_OFF")
             return Action.TURN_OFF.value
-
-        # Calculate current exploration rate dynamically
-        current_exploration_rate = self._calculate_dynamic_exploration_rate()
-
-        # Only perform exploration if enabled
-        if self.enable_exploration and random.random() < current_exploration_rate:
-            # Ensure there are actions defined for the current state before choosing randomly
-            if self.transition_model.get(self.current_state):
-                random_action = random.choice(list(self.transition_model[self.current_state].keys()))
-                logger.info(f"Exploring random action: {random_action} (exploration_rate: {current_exploration_rate:.3f})")
-                return random_action
-            else:
-                logger.warning(f"No actions defined for state {self.current_state} in model, defaulting to TURN_OFF")
-                return Action.TURN_OFF.value
-
-        best_action = None
-        best_value = float('-inf')
-        action_values_debug = {} # For detailed logging
-
-        if not self.transition_model.get(self.current_state):
-            logger.warning(f"No actions defined for current state {self.current_state} in transition model. Defaulting to OFF.")
-            return Action.TURN_OFF.value
-
-        for action_key_str in self.transition_model[self.current_state]:
-            action_total_expected_value = 0
-            
-            # Ensure there are next states defined for this action
-            if not self.transition_model[self.current_state].get(action_key_str):
-                logger.debug(f"No next states defined for action {action_key_str} from state {self.current_state}")
-                continue
-
-            logger.debug(f"DEBUG: Evaluating action: {action_key_str}")
-
-            for next_state_key_str, probability in self.transition_model[self.current_state][action_key_str].items():
-                if probability < 0.001: # Skip negligible probabilities
-                    continue
-
-                parsed_next_state = self._parse_state_key(next_state_key_str)
-                if not parsed_next_state:
-                    logger.warning(f"Could not parse next_state_key_str: {next_state_key_str}")
-                    continue
-                
-                co2_level_next = parsed_next_state.get("co2_level")
-                temp_level_next = parsed_next_state.get("temp_level")
-                occupancy_level_next = parsed_next_state.get("occupancy")
-
-                current_state_value = 0
-                co2_reward = 0
-                temp_reward = 0
-                occupancy_reward = 0
-                energy_cost = 0 # Note: costs are usually negative rewards
-
-                # 1. CO2 Component
-                if co2_level_next == CO2Level.LOW.value:
-                    co2_reward = 2.0
-                    if active_co2_thr.get("medium_max", 1200) > 1000: # If target allows higher CO2
-                        co2_reward -= 0.5 # Slightly reduce reward for over-ventilating
-                elif co2_level_next == CO2Level.MEDIUM.value:
-                    # Reward if MEDIUM is within or below target, penalize if target is LOW
-                    if active_co2_thr.get("medium_max", 1200) >= active_co2_thr.get("low_max", 800):
-                        co2_reward = 1.0
-                    else: # Target is strictly LOW
-                        co2_reward = 0.2 # Still better than HIGH
-                elif co2_level_next == CO2Level.HIGH.value:
-                    # Larger penalty for occupied rooms, but not extreme
-                    base_penalty = -3.0
-                    if occupancy_level_next == Occupancy.OCCUPIED.value:
-                        # Progressive penalty depending on actual CO2 level
-                        co2 = self.data_manager.latest_data["scd41"]["co2"]
-                        if co2:
-                            # Larger penalty for higher CO2 levels
-                            co2_excess = max(0, co2 - active_co2_thr.get("medium_max", 1000))
-                            co2_penalty_factor = min(4.0, 1.0 + (co2_excess / 500))  # Capped at max 4x
-                            co2_reward = base_penalty * co2_penalty_factor
-                        else:
-                            co2_reward = base_penalty * 2.5  # If no data, use moderate multiplier
-                    else:
-                        co2_reward = base_penalty  # Standard penalty for empty rooms
-
-                # 2. Temperature Component
-                target_temp_min = active_temp_thr.get("low_max", 20)
-                target_temp_max = active_temp_thr.get("medium_max", 24)
-
-                if temp_level_next == TemperatureLevel.MEDIUM.value: # Approx 20-24C
-                    # Ideal if target range overlaps significantly with 20-24C
-                    # For simplicity, consider MEDIUM always good if target isn't extreme
-                    if 19 < target_temp_min < 25 and 19 < target_temp_max < 25:
-                         temp_reward = 1.5
-                    else: # If target is very cold or very hot, MEDIUM is less ideal
-                         temp_reward = 0.8 
-                elif temp_level_next == TemperatureLevel.LOW.value: # Approx <20C
-                    if target_temp_min <= 20: # Target allows or prefers cool
-                        temp_reward = 0.5 # Acceptable
-                        if target_temp_min < 19: temp_reward += 0.3 # Even better if target is very cool
-                    else: # Target is warmer, LOW is bad
-                        temp_reward = -1.0 - (target_temp_min - 20) * 0.2 # Penalty increases with deviation
-                    
-                    # Add additional penalty for cooling if already cold and CO2 is not critical
-                    current_temp = self.data_manager.latest_data["scd41"]["temperature"]
-                    current_co2 = self.data_manager.latest_data["scd41"]["co2"]
-                    if (current_temp and current_temp < 19.0 and
-                        action_key_str != Action.TURN_OFF.value and # Check against Enum value
-                        current_co2 and current_co2 < 1200):
-                        temp_reward -= 0.5  # Moderate additional penalty
-                elif temp_level_next == TemperatureLevel.HIGH.value: # Approx >24C
-                    if target_temp_max >= 24: # Target allows or prefers warm
-                        temp_reward = 0.5 # Acceptable
-                        if target_temp_max > 25: temp_reward += 0.3 # Even better if target is very warm
-                    else: # Target is cooler, HIGH is bad
-                        temp_reward = -1.0 - (24 - target_temp_max) * 0.2 # Penalty increases with deviation
-                
-                temp_reward = max(-2.0, min(2.0, temp_reward)) # Cap rewards/penalties
-
-                # 3. Occupancy Component
-                if occupancy_level_next == Occupancy.OCCUPIED.value and current_occupants > 0:
-                    occupancy_reward = 0.8
-                elif occupancy_level_next == Occupancy.EMPTY.value and current_occupants == 0:
-                    occupancy_reward = 0.5
-                
-                # 4. Energy Cost Component
-                if action_key_str == Action.TURN_ON_MAX.value:
-                    energy_cost = -0.5 
-                elif action_key_str == Action.TURN_ON_MEDIUM.value:
-                    energy_cost = -0.3 
-                elif action_key_str == Action.TURN_ON_LOW.value:
-                    energy_cost = -0.25
-
-                current_state_value = co2_reward + temp_reward + occupancy_reward + energy_cost
-                
-                logger.debug(f"  DEBUG: Next state: {next_state_key_str}, Prob: {probability:.4f}")
-                logger.debug(f"    Components: CO2_rew={co2_reward:.2f}, Temp_rew={temp_reward:.2f}, Occ_rew={occupancy_reward:.2f}, Energy_cost={energy_cost:.2f}")
-                logger.debug(f"    Raw State_value: {current_state_value:.2f}, Weighted: {probability * current_state_value:.4f}")
-                
-                action_total_expected_value += probability * current_state_value
-            
-            action_values_debug[action_key_str] = action_total_expected_value
-            logger.debug(f"  DEBUG: Total Expected Value for action {action_key_str}: {action_total_expected_value:.4f}")
-
-            if action_total_expected_value > best_value:
-                best_value = action_total_expected_value
-                best_action = action_key_str
         
-        logger.debug(f"DEBUG: All action values (before potential overrides): {action_values_debug}")
-
-        # Apply state-aware risk weighting - prioritize certain factors based on context
-        if self.current_state: # Ensure current_state is not None
-            parsed_current_state_for_weighting = self._parse_state_key(self.current_state) 
-            current_co2_level_for_weighting = parsed_current_state_for_weighting.get("co2_level")
-            current_occupancy_for_weighting = parsed_current_state_for_weighting.get("occupancy")
-
-            if current_occupancy_for_weighting == Occupancy.OCCUPIED.value:
-                
-                # When room is occupied, AND CO2 IS NOT ALREADY LOW, air quality (CO2) is weighted more heavily
-                if current_co2_level_for_weighting == CO2Level.HIGH.value:
-                    co2_importance_multiplier = 5.0
-                    logger.debug(f"Applying CO2 importance weighting because current CO2 is {current_co2_level_for_weighting} and occupied.")
-                    for action_key_str_weighting in action_values_debug:
-                        expected_co2_improvement = 0
-                        if action_key_str_weighting != Action.TURN_OFF.value:
-                            if action_key_str_weighting == Action.TURN_ON_LOW.value: expected_co2_improvement = 1.0
-                            elif action_key_str_weighting == Action.TURN_ON_MEDIUM.value: expected_co2_improvement = 2.0
-                            elif action_key_str_weighting == Action.TURN_ON_MAX.value: expected_co2_improvement = 3.0
-                            action_values_debug[action_key_str_weighting] += expected_co2_improvement * co2_importance_multiplier
-                    logger.debug(f"Action values after CO2 importance weighting: {action_values_debug}")
-                
-                # Direct override for high CO2 in occupied rooms - ensure ventilation is prioritized
-                if current_co2_level_for_weighting == CO2Level.HIGH.value: 
-                    
-                    logger.info(f"Applying critical air quality override for occupied room with high CO2. Values before override: {action_values_debug}")
-                    if Action.TURN_OFF.value in action_values_debug:
-                        action_values_debug[Action.TURN_OFF.value] -= 1000 
-                    if Action.TURN_ON_MEDIUM.value in action_values_debug:
-                        action_values_debug[Action.TURN_ON_MEDIUM.value] += 50 
-                    if Action.TURN_ON_MAX.value in action_values_debug:
-                        action_values_debug[Action.TURN_ON_MAX.value] += 40
-                    logger.debug(f"Values after critical override: {action_values_debug}")
-                
-                # After weighting, re-evaluate best_action and best_value based on modified action_values_debug
-                if action_values_debug: # Check if dictionary is not empty
-                    best_action = max(action_values_debug, key=action_values_debug.get)
-                    best_value = action_values_debug[best_action]
-                else: 
-                    best_action = None 
-                    best_value = float('-inf')
+        # Find best action (with highest Q-value)
+        max_q_value = max(action_q_values.values())
+        best_actions = [action for action, q_value in action_q_values.items() if q_value == max_q_value]
         
-        logger.debug(f"DEBUG: Final action values (after all overrides): {action_values_debug}")
+        # If multiple actions have same max Q-value, choose one randomly
+        best_action = random.choice(best_actions)
         
-        if best_action is None: # Fallback if no action was chosen
-            if self.transition_model.get(self.current_state) and self.transition_model[self.current_state]:
-                 best_action = random.choice(list(self.transition_model[self.current_state].keys()))
-                 logger.warning(f"No best_action derived from values/override, choosing random available: {best_action}")
-            else:
-                 best_action = Action.TURN_OFF.value # Ultimate fallback
-                 logger.warning(f"No actions available for state {self.current_state} or values led to no action, defaulting to OFF.")
-
-        # Apply new dynamic exploration rate calculation
-        self._base_exploration_rate *= self.random_action_decay
-        
-        self.last_best_value = best_value
-        logger.info(f"Selected action: {best_action} for state: {self.current_state} (best_value: {best_value:.2f}, exploration_rate: {current_exploration_rate:.3f})")
-        # Log active thresholds for context
-        log_active_co2_thr, log_active_temp_thr = self._get_current_target_thresholds(current_occupants)
-        logger.info(f"Using thresholds - CO2: {log_active_co2_thr}, Temp: {log_active_temp_thr}")
-        
+        logger.info(f"Selected action: {best_action} for state: {self.current_state} (Q-value: {max_q_value:.2f})")
         return best_action
-    
-    def _calculate_dynamic_exploration_rate(self):
-        """
-        Calculate the dynamic exploration rate based on model confidence, 
-        current state value, and preference effectiveness.
-        
-        Returns:
-            float: Calculated exploration rate
-        """
-        # Calculate modifiers
-        model_confidence_modifier = self._calculate_model_confidence_modifier()
-        current_state_value_modifier = self._calculate_current_state_value_modifier()
-        preference_effectiveness_modifier = self._calculate_preference_effectiveness_modifier()
-        
-        # Calculate dynamic exploration rate
-        current_exploration_rate = (
-            self._base_exploration_rate * 
-            model_confidence_modifier * 
-            current_state_value_modifier * 
-            preference_effectiveness_modifier
-        )
-        
-        # Constrain to reasonable limits
-        current_exploration_rate = max(self.MIN_EXPLORATION_RATE, 
-                                     min(self.MAX_EXPLORATION_RATE, current_exploration_rate))
-        
-        # Log the calculation details
-        logger.debug(f"Dynamic exploration rate calculation:")
-        logger.debug(f"  Base rate: {self._base_exploration_rate:.4f}")
-        logger.debug(f"  Model confidence modifier: {model_confidence_modifier:.4f}")
-        logger.debug(f"  State value modifier: {current_state_value_modifier:.4f}")
-        logger.debug(f"  Preference effectiveness modifier: {preference_effectiveness_modifier:.4f}")
-        logger.debug(f"  Final rate (constrained): {current_exploration_rate:.4f}")
-        
-        return current_exploration_rate
-    
-    def _calculate_model_confidence_modifier(self):
-        """
-        Calculate modifier based on model's confidence in its choice.
-        High confidence -> lower exploration (modifier < 1.0)
-        Low confidence -> higher exploration (modifier > 1.0)
-        
-        Returns:
-            float: Confidence‐based multiplier.
-        """
-        if not self.current_state or self.current_state not in self.transition_model:
-            return 1.0  # Default modifier
-        
-        # First calculate action values
-        action_values = {}
-        for action_key_str in self.transition_model[self.current_state]:
-            if not self.transition_model[self.current_state].get(action_key_str):
-                continue
-                
-            action_total_expected_value = 0
-            for next_state_key_str, probability in self.transition_model[self.current_state][action_key_str].items():
-                if probability < 0.001:
-                    continue
-                    
-                parsed_next_state = self._parse_state_key(next_state_key_str)
-                if not parsed_next_state:
-                    continue
-                
-                # Simplified state value calculation (just for confidence)
-                state_value = 0
-                co2_level_next = parsed_next_state.get("co2_level")
-                if co2_level_next == CO2Level.LOW.value:
-                    state_value = 2.0
-                elif co2_level_next == CO2Level.MEDIUM.value:
-                    state_value = 0.5
-                elif co2_level_next == CO2Level.HIGH.value:
-                    state_value = -3.0
-                
-                action_total_expected_value += probability * state_value
-            
-            action_values[action_key_str] = action_total_expected_value
-        
-        if len(action_values) < 2:
-            return 1.0  # Not enough actions to determine confidence
-        
-        # Get best and second best values
-        sorted_values = sorted(action_values.values(), reverse=True)
-        best_value = sorted_values[0]
-        second_best_value = sorted_values[1]
-        
-        # Calculate confidence gap
-        value_gap = best_value - second_best_value
-        
-        # Determine modifier based on confidence
-        if value_gap > 1.0:  # High confidence
-            return 0.6  # Reduce exploration
-        elif value_gap > 0.5:
-            return 0.8
-        elif value_gap < -0.5:  # Very uncertain (negative gap)
-            return 1.5  # Increase exploration
-        elif value_gap < 0.2:  # Low confidence
-            return 1.3
-        else:
-            return 1.0  # Medium confidence
-    
-    def _calculate_current_state_value_modifier(self):
-        """
-        Scale exploration by current state comfort quality.
-
-        Returns:
-            float: State quality multiplier.
-        """
-        current_occupants = self.data_manager.latest_data["room"]["occupants"]
-        co2 = self.data_manager.latest_data["scd41"]["co2"]
-        temp = self.data_manager.latest_data["scd41"]["temperature"]
-        
-        # Get current target thresholds
-        active_co2_thr, active_temp_thr = self._get_current_target_thresholds(current_occupants)
-        
-        # Evaluate current state quality
-        state_quality_score = 0
-        
-        # CO2 component
-        if co2 is not None:
-            if co2 < active_co2_thr["low_max"]:
-                state_quality_score += 2.0  # Good air quality
-            elif co2 < active_co2_thr["medium_max"]:
-                state_quality_score += 0.5  # Acceptable
-            else:
-                state_quality_score -= 3.0  # Poor air quality
-                
-                # Worse if occupied
-                if current_occupants > 0:
-                    state_quality_score -= 2.0
-        
-        # Temperature component
-        if temp is not None:
-            if active_temp_thr["low_max"] <= temp <= active_temp_thr["medium_max"]:
-                state_quality_score += 1.0  # Comfortable temperature
-            elif temp < active_temp_thr["low_max"] - 2:
-                state_quality_score -= 1.0  # Too cold
-            elif temp > active_temp_thr["medium_max"] + 2:
-                state_quality_score -= 1.0  # Too hot
-        
-        # Determine modifier based on state quality
-        if state_quality_score >= 2.0:  # Very good state
-            if current_occupants == 0:
-                return 2.0  # Empty home in good state - can experiment
-            else:
-                return 1.5  # Occupied but comfortable - some experimentation allowed
-        elif state_quality_score <= -2.0:  # Bad state
-            if current_occupants > 0:
-                return 0.3  # Occupied and uncomfortable - stick to known good actions
-            else:
-                return 0.6  # Empty but bad state - somewhat conservative
-        else:  # Medium state quality
-            return 1.0
-    
-    def _calculate_preference_effectiveness_modifier(self):
-        """
-        Adjust exploration based on how well current settings match preferences.
-
-        Returns:
-            float: Preference‐effectiveness multiplier.
-        """
-        if not self.preference_manager:
-            return 1.0  # No preference manager available
-        
-        try:
-            # Get all user preferences
-            all_user_preferences = self.preference_manager.get_all_user_preferences()
-            
-            if not all_user_preferences:
-                return 1.0  # No users to calculate effectiveness for
-            
-            # Calculate compromise preference
-            all_user_ids = list(all_user_preferences.keys())
-            compromise = self.preference_manager.calculate_compromise_preference(all_user_ids)
-            
-            # Use effectiveness score
-            effectiveness_score = compromise.effectiveness_score
-            
-            # Determine modifier based on effectiveness
-            if effectiveness_score < 0.5:  # Low effectiveness
-                return 1.6  # Increase exploration significantly
-            elif effectiveness_score < 0.7:
-                return 1.3  # Moderate increase in exploration
-            elif effectiveness_score > 0.8:  # High effectiveness
-                return 0.7  # Reduce exploration
-            else:  # Medium effectiveness
-                return 1.0
-                
-        except Exception as e:
-            logger.error(f"Error calculating preference effectiveness modifier: {e}")
-            return 1.0  # Default modifier on error
     
     def _execute_action(self, action):
         """
@@ -1052,50 +718,44 @@ class MarkovController:
         
         return success
     
-    def _update_model(self, previous_state, action, current_state, reward=None):
+    def _update_q_value(self, state_key, action, reward, next_state_key):
         """
-        Incorporate observed transition into MDP, apply learning rate, and renormalize.
-
+        Update Q-value for a state-action pair using the Q-learning formula.
+        
         Args:
-            previous_state: State before action.
-            action: Action taken.
-            current_state: Resulting state.
-            reward: Optional external reward (unused).
+            state_key: Current state
+            action: Action taken
+            reward: Reward received
+            next_state_key: Resulting state
         """
-        try:
-            # Check if states and action exist in model
-            if previous_state not in self.transition_model:
-                logger.warning(f"Unknown previous state: {previous_state}")
-                return
-            
-            if action not in self.transition_model[previous_state]:
-                logger.warning(f"Unknown action: {action}")
-                return
-            
-            # Initialize if destination state doesn't exist
-            if current_state not in self.transition_model[previous_state][action]:
-                self.transition_model[previous_state][action][current_state] = 0
-            
-            # Update probability with learning rate
-            # Increase probability of observed transition
-            self.transition_model[previous_state][action][current_state] += self.learning_rate
-            
-            # Normalize probabilities
-            total = sum(self.transition_model[previous_state][action].values())
-            for state in self.transition_model[previous_state][action]:
-                self.transition_model[previous_state][action][state] /= total
-            
-            # Save updated model periodically (every ~50 updates, randomly)
-            if random.random() < 0.02:
-                try:
-                    with open(self.model_file, 'w') as f:
-                        json.dump(self.transition_model, f, indent=2)
-                    logger.debug("Saved updated Markov model")
-                except Exception as e:
-                    logger.error(f"Error saving model: {e}")
-            
-        except Exception as e:
-            logger.error(f"Error updating model: {e}")
+        # Get current Q-value
+        current_q = self._get_q_value(state_key, action)
+        
+        # Get maximum Q-value for next state
+        max_next_q = self._get_max_q_value(next_state_key)
+        
+        # Calculate target value using Q-learning formula
+        target = reward + self.discount_factor * max_next_q
+        
+        # Calculate TD error
+        td_error = target - current_q
+        
+        # Ensure state_key exists in q_values dictionary
+        if state_key not in self.q_values:
+            self.q_values[state_key] = {}
+        
+        # Ensure action exists for this state
+        if action not in self.q_values[state_key]:
+            self.q_values[state_key][action] = 0.0
+        
+        # Update Q-value
+        self.q_values[state_key][action] = current_q + self.learning_rate * td_error
+        
+        logger.debug(f"Updated Q-value for state: {state_key}, action: {action}, new value: {self.q_values[state_key][action]:.4f}")
+        
+        # Periodically save Q-values (very low frequency to avoid I/O overhead)
+        if random.random() < 0.01:  # ~1% chance to save on each update
+            self.save_q_values(self.model_file)
     
     def set_auto_mode(self, enabled):
         """Enable or disable automatic control."""
@@ -1120,17 +780,14 @@ class MarkovController:
         # Get current occupancy for status report
         occupants = self.data_manager.latest_data["room"]["occupants"]
         
-        # Calculate current exploration rate for status
-        current_exploration_rate = self._calculate_dynamic_exploration_rate()
-        
         return {
             "auto_mode": self.auto_mode,
             "co2_thresholds": self.co2_thresholds,
             "temp_thresholds": self.temp_thresholds,
             "current_state": self.current_state,
             "last_action": self.last_action,
-            "base_exploration_rate": self._base_exploration_rate,  # Base rate
-            "current_exploration_rate": current_exploration_rate,  # Dynamic rate
+            "exploration_rate": self.exploration_rate,
+            "learning_rate": self.learning_rate,
             "ventilation_status": self.pico_manager.get_ventilation_status(),
             "ventilation_speed": self.pico_manager.get_ventilation_speed(),
             "last_action_time": self.last_action_time.isoformat() if self.last_action_time else None,
