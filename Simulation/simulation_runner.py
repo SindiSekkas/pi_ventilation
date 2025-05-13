@@ -198,6 +198,19 @@ class SimulationRunner:
         self.current_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         self.time_step_minutes = self.config["time_step_minutes"]
         
+        # Log the configuration values to verify
+        logger.info("Environment Configuration:")
+        for key, value in self.config["environment"].items():
+            logger.info(f"  {key}: {value}")
+        
+        logger.info("Reward Configuration:")
+        for key, value in self.config["reward"].items():
+            logger.info(f"  {key}: {value}")
+        
+        logger.info("Controller Configuration:")
+        for key, value in self.config["markov_controller"].items():
+            logger.info(f"  {key}: {value}")
+        
         # Initialized flag
         self.is_initialized = True
     
@@ -524,12 +537,16 @@ class SimulationRunner:
         logger.info(f"Starting evaluation for {self.config['evaluation_days']} days "
                   f"({total_steps} steps of {self.time_step_minutes} minutes)")
         
+        # Initialize prev_action before the loop starts
+        prev_action = "off"
+        
         # Simulation loop
         try:
-            prev_action = "off"
-            
             for step in range(total_steps):
                 self.current_step = step
+                
+                if step % 100 == 0:
+                    logger.info(f"Simulation progress: step {step}/{total_steps} ({step/total_steps*100:.1f}%)")
                 
                 # Get occupancy for this time step
                 occupancy_data = self.occupant_model.get_next_timestep(mode="testing")
@@ -541,9 +558,19 @@ class SimulationRunner:
                 env_state, energy_consumed = self.env.step(
                     prev_action, num_awake, num_sleeping, self.time_step_minutes
                 )
-                
+
+                # Log the environmental state values
+                logger.debug(f"Environment state: CO2={env_state['co2_ppm']:.1f}ppm, "
+                            f"Temp={env_state['temperature_c']:.1f}°C, "
+                            f"Energy={energy_consumed:.2f}Wh")
+
                 # Update simulated sensor data
                 self.sim_data_manager.update_sensor_data(env_state)
+                
+                # Verify data manager values
+                logger.debug(f"DataManager values: CO2={self.sim_data_manager.latest_data['scd41']['co2']}, "
+                            f"Temp={self.sim_data_manager.latest_data['scd41']['temperature']}")
+                
                 self.sim_data_manager.update_room_data(
                     occupants=num_awake + num_sleeping,
                     ventilated=(prev_action != "off"),
@@ -598,6 +625,7 @@ class SimulationRunner:
                     logger.info(f"Evaluation progress: {days_completed:.1f}/{self.config['evaluation_days']} days "
                               f"({100 * step / total_steps:.1f}%)")
             
+            logger.info(f"Completed {step+1}/{total_steps} steps ({(step+1)/total_steps*100:.1f}%)")
             logger.info(f"Evaluation of {controller_name} completed")
             
             # Compute and return evaluation metrics
@@ -620,7 +648,7 @@ class SimulationRunner:
         except Exception as e:
             logger.error(f"Error during evaluation: {e}", exc_info=True)
             return {}
-    
+            
     def compare_controllers(self) -> Dict[str, Dict[str, Any]]:
         """
         Train and compare multiple controllers.

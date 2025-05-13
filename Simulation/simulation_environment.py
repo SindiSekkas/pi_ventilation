@@ -165,7 +165,7 @@ class SimulationEnvironment:
             logger.warning(f"Invalid action: {action}. Using 'off' instead.")
             action = "off"
         
-        # Log starting state for troubleshooting
+        # Log starting state
         logger.debug(f"Step input: Action={action}, AwakeOcc={num_occupants_awake}, "
                     f"SleepingOcc={num_occupants_sleeping}, TimeStep={time_step_minutes}min")
         logger.debug(f"State before step: CO2={self.co2_ppm:.1f}ppm, Temp={self.temperature_c:.1f}°C, "

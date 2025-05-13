@@ -187,16 +187,21 @@ class MetricsCollector:
         # CO2 comfort
         if co2 <= co2_threshold:
             self.co2_comfort_periods.append(time_minutes)
+            logger.debug(f"CO2 comfort: {co2} <= {co2_threshold}")
         elif co2 <= co2_threshold * 1.2:
             self.co2_slight_discomfort_periods.append(time_minutes)
+            logger.debug(f"CO2 slight discomfort: {co2} > {co2_threshold}")
         else:
             self.co2_high_discomfort_periods.append(time_minutes)
+            logger.debug(f"CO2 high discomfort: {co2} > {co2_threshold * 1.2}")
         
         # Temperature comfort
         if temp_min <= temp <= temp_max:
             self.temp_comfort_periods.append(time_minutes)
+            logger.debug(f"Temperature comfort: {temp_min} <= {temp} <= {temp_max}")
         else:
             self.temp_discomfort_periods.append(time_minutes)
+            logger.debug(f"Temperature discomfort: temperature {temp} outside range [{temp_min}, {temp_max}]")
         
         # Humidity comfort
         if humidity_min <= humidity <= humidity_max:

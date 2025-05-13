@@ -580,58 +580,73 @@ class MarkovController:
         try:
             # Get current occupancy
             occupants = self.data_manager.latest_data["room"]["occupants"]
+            logger.debug(f"Evaluating state with occupants: {occupants}")
             
             # Update thresholds based on occupancy
             self._update_thresholds_for_occupancy(occupants)
             
             # Get CO2 level
             co2 = self.data_manager.latest_data["scd41"]["co2"]
+            logger.debug(f"Current CO2 reading: {co2}ppm, thresholds: {self.co2_thresholds}")
             if co2 is None:
-                logger.warning("Missing CO2 data")
+                logger.error("CO2 reading is None - cannot evaluate state")
                 return None
             
             # Determine CO2 level category
             if co2 < self.co2_thresholds["low_max"]:
                 co2_level = CO2Level.LOW.value
+                logger.debug(f"CO2 level: LOW ({co2}ppm < {self.co2_thresholds['low_max']}ppm)")
             elif co2 < self.co2_thresholds["medium_max"]:
                 co2_level = CO2Level.MEDIUM.value
+                logger.debug(f"CO2 level: MEDIUM ({self.co2_thresholds['low_max']}ppm <= {co2}ppm < {self.co2_thresholds['medium_max']}ppm)")
             else:
                 co2_level = CO2Level.HIGH.value
+                logger.debug(f"CO2 level: HIGH ({co2}ppm >= {self.co2_thresholds['medium_max']}ppm)")
             
             # Get temperature
             temp = self.data_manager.latest_data["scd41"]["temperature"]
+            logger.debug(f"Current temperature reading: {temp}°C, thresholds: {self.temp_thresholds}")
             if temp is None:
-                logger.warning("Missing temperature data")
+                logger.error("Temperature reading is None - cannot evaluate state")
                 return None
                 
             # Determine temperature level
             if temp < self.temp_thresholds["low_max"]:
                 temp_level = TemperatureLevel.LOW.value
+                logger.debug(f"Temperature level: LOW ({temp}°C < {self.temp_thresholds['low_max']}°C)")
             elif temp < self.temp_thresholds["medium_max"]:
                 temp_level = TemperatureLevel.MEDIUM.value
+                logger.debug(f"Temperature level: MEDIUM ({self.temp_thresholds['low_max']}°C <= {temp}°C < {self.temp_thresholds['medium_max']}°C)")
             else:
                 temp_level = TemperatureLevel.HIGH.value
+                logger.debug(f"Temperature level: HIGH ({temp}°C >= {self.temp_thresholds['medium_max']}°C)")
             
             # Get occupancy state
             occupancy = Occupancy.OCCUPIED.value if occupants > 0 else Occupancy.EMPTY.value
+            logger.debug(f"Occupancy state: {occupancy} ({occupants} occupants)")
             
             # Determine time of day
             hour = datetime.now().hour
             if 5 <= hour < 12:
                 time_of_day = TimeOfDay.MORNING.value
+                logger.debug(f"Time of day: MORNING (hour: {hour})")
             elif 12 <= hour < 18:
                 time_of_day = TimeOfDay.DAY.value
+                logger.debug(f"Time of day: DAY (hour: {hour})")
             elif 18 <= hour < 22:
                 time_of_day = TimeOfDay.EVENING.value
+                logger.debug(f"Time of day: EVENING (hour: {hour})")
             else:
                 time_of_day = TimeOfDay.NIGHT.value
+                logger.debug(f"Time of day: NIGHT (hour: {hour})")
             
             # Create state key
             state_key = self._create_state_key(co2_level, temp_level, occupancy, time_of_day)
+            logger.debug(f"State evaluation complete - Current state key: {state_key}")
             return state_key
             
         except Exception as e:
-            logger.error(f"Error evaluating state: {e}")
+            logger.error(f"Error evaluating state: {e}", exc_info=True)
             return None
     
     def _decide_action(self):
