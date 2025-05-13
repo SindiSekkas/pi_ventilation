@@ -33,6 +33,7 @@ class AdaptiveSleepAnalyzer:
         """
         self.data_manager = data_manager
         self.controller = controller
+        self.current_sim_time = None  # Added for simulation support
         
         # Storage configuration
         self.data_dir = "data/sleep_patterns"
@@ -114,10 +115,16 @@ class AdaptiveSleepAnalyzer:
         logger.info("Initialized new adaptive sleep patterns structure")
         return patterns
     
-    def _initialize_daily_tracking(self):
-        """Reset daily CO2 tracking for a new day."""
+    def _initialize_daily_tracking(self, current_time_source=None):
+        """
+        Reset daily CO2 tracking for a new day.
+        
+        Args:
+            current_time_source: Optional datetime source for simulation
+        """
         self.daily_co2_readings = []
-        self.current_day = datetime.now().day
+        current_time = current_time_source or (self.current_sim_time or datetime.now())
+        self.current_day = current_time.day
     
     def save_patterns(self):
         """
@@ -138,22 +145,29 @@ class AdaptiveSleepAnalyzer:
             logger.error(f"Error saving sleep patterns: {e}")
             return False
     
-    def update_co2_data(self):
+    def update_co2_data(self, current_sim_time: datetime = None):
         """
         Record latest CO2 reading and analyze patterns.
         
         Should be called regularly (approximately every 5 minutes).
         
+        Args:
+            current_sim_time: Optional simulation time for time-stepped simulation
+            
         Returns:
             bool: Success or failure of the update operation
         """
         try:
-            now = datetime.now()
+            now = current_sim_time or datetime.now()
+            
+            # Update simulation time if provided
+            if current_sim_time:
+                self.current_sim_time = current_sim_time
             
             # Start new daily record if day has changed
             if now.day != self.current_day:
                 self._process_daily_data()
-                self._initialize_daily_tracking()
+                self._initialize_daily_tracking(now)
             
             # Get latest CO2 reading
             co2 = self.data_manager.latest_data["scd41"]["co2"]
@@ -226,7 +240,7 @@ class AdaptiveSleepAnalyzer:
         
         # Convert time string to datetime
         try:
-            today = datetime.now().date()
+            today = (self.current_sim_time or datetime.now()).date()
             time_parts = pattern["sleep"].split(":")
             sleep_time = datetime.combine(today, datetime.min.time().replace(
                 hour=int(time_parts[0]),
@@ -286,7 +300,7 @@ class AdaptiveSleepAnalyzer:
         
         # Convert time string to datetime
         try:
-            today = datetime.now().date()
+            today = (self.current_sim_time or datetime.now()).date()
             time_parts = pattern["wake"].split(":")
             wake_time = datetime.combine(today, datetime.min.time().replace(
                 hour=int(time_parts[0]),
@@ -315,7 +329,7 @@ class AdaptiveSleepAnalyzer:
             List of matching events
         """
         recent_events = []
-        cutoff_date = datetime.now() - timedelta(days=days_back)
+        cutoff_date = (self.current_sim_time or datetime.now()) - timedelta(days=days_back)
         
         for event in self.sleep_patterns.get("detected_events", []):
             try:
@@ -370,7 +384,7 @@ class AdaptiveSleepAnalyzer:
         """
         try:
             last_updated = datetime.fromisoformat(self.sleep_patterns.get("last_updated", datetime.now().isoformat()))
-            days_since_update = (datetime.now() - last_updated).days
+            days_since_update = ((self.current_sim_time or datetime.now()) - last_updated).days
             
             # Step decay based on elapsed time
             if days_since_update <= 1:
@@ -479,7 +493,7 @@ class AdaptiveSleepAnalyzer:
             var1 = np.std(rates1) if len(rates1) > 1 else 0
             var2 = np.std(rates2) if len(rates2) > 1 else 0
             
-            now = datetime.now()
+            now = self.current_sim_time or datetime.now()
             current_time = now.time()
             
             # Verify enough time has passed since last events
@@ -726,7 +740,7 @@ class AdaptiveSleepAnalyzer:
             
             # Record the adjustment
             self.sleep_patterns["night_mode_adjustments"].append({
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": (self.current_sim_time or datetime.now()).isoformat(),
                 "type": "start_time",
                 "from": current_start_hour,
                 "to": new_hour,
@@ -809,7 +823,7 @@ class AdaptiveSleepAnalyzer:
             
             # Record the adjustment
             self.sleep_patterns["night_mode_adjustments"].append({
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": (self.current_sim_time or datetime.now()).isoformat(),
                 "type": "end_time",
                 "from": current_end_hour,
                 "to": new_hour,
@@ -847,7 +861,7 @@ class AdaptiveSleepAnalyzer:
                 first_reading = self.daily_co2_readings[0]
                 data_date = datetime.fromisoformat(first_reading["timestamp"]).date().isoformat()
             except:
-                data_date = datetime.now().date().isoformat()
+                data_date = (self.current_sim_time or datetime.now()).date().isoformat()
             
             # Extract and calculate CO2 change rates
             timestamps = []
@@ -1101,6 +1115,11 @@ class AdaptiveSleepAnalyzer:
         Returns:
             bool: Success or failure
         """
+        # If in simulation mode, don't start the thread
+        if self.current_sim_time is not None:
+            logger.warning("Adaptive sleep analyzer is in simulation mode, not starting analysis thread")
+            return False
+            
         if self.thread is not None and self.thread.is_alive():
             logger.warning("Adaptive sleep analyzer already running")
             return False

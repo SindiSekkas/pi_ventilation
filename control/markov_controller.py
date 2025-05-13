@@ -72,6 +72,7 @@ class MarkovController:
         self.model_dir = model_dir
         self.scan_interval = scan_interval
         self.enable_exploration = enable_exploration  # Control exploration behavior
+        self.current_sim_time = None  # Added for simulation support
         os.makedirs(model_dir, exist_ok=True)
         
         # Control thread
@@ -139,6 +140,10 @@ class MarkovController:
         self.learning_rate = 0.1  # Alpha - initial learning rate (0.01-0.5 recommended)
         self.discount_factor = 0.9  # Gamma - future reward discount (0.9-0.99 recommended)
         self.exploration_rate = 0.1  # Epsilon - exploration rate (0.1-1.0 recommended)
+        
+        # Set exploration rate based on enable_exploration flag
+        if not enable_exploration:
+            self.exploration_rate = self.MIN_EXPLORATION_RATE
         
         # Decay parameters for Q-learning
         self.epsilon_decay = 0.995  # Rate at which exploration decreases (0.9-0.999 recommended)
@@ -249,7 +254,7 @@ class MarkovController:
         if not self.night_mode_enabled:
             return False
         
-        current_hour = datetime.now().hour
+        current_hour = (self.current_sim_time or datetime.now()).hour
         
         # Handle case where night mode crosses midnight
         if self.night_mode_start_hour > self.night_mode_end_hour:
@@ -333,6 +338,11 @@ class MarkovController:
     
     def start(self):
         """Start the Markov controller."""
+        # If in simulation mode, don't start the thread
+        if self.current_sim_time is not None:
+            logger.warning("Markov controller is in simulation mode, not starting control thread")
+            return False
+            
         if self.thread is not None and self.thread.is_alive():
             logger.warning("Markov controller already running")
             return False
@@ -377,7 +387,7 @@ class MarkovController:
                     continue
                 
                 # Check if minimum time has passed since last action
-                current_time = datetime.now()
+                current_time = self.current_sim_time or datetime.now()
                 time_since_last_action = float('inf')
                 if self.last_action_time:
                     time_since_last_action = (current_time - self.last_action_time).total_seconds()
@@ -400,9 +410,10 @@ class MarkovController:
                     
                     # Update model based on previous state transition (if applicable)
                     if previous_state and self.last_action:
-                        # For simplicity in this sprint, we'll use a default reward
-                        # In a real implementation, reward should be calculated based on state transition
-                        reward = 0.0  # Placeholder for now
+                        # Calculate reward based on the state transition
+                        current_sensor_data = self.data_manager.latest_data
+                        reward = self._calculate_reward(previous_state, self.last_action, self.current_state, current_sensor_data)
+                        logger.info(f"Reward for transition from {previous_state} via {self.last_action} to {self.current_state}: {reward:.2f}")
                         self._update_q_value(previous_state, self.last_action, reward, self.current_state)
                 
                 # Wait for next check
@@ -412,6 +423,206 @@ class MarkovController:
                 logger.error(f"Error in Markov control loop: {e}")
                 time.sleep(self.scan_interval)
     
+    def make_step_decision(self, current_sim_time: datetime):
+        """
+        Execute one cycle of decision-making for simulation step.
+        
+        Args:
+            current_sim_time: The simulation's current time
+        """
+        try:
+            # Store simulation time
+            self.current_sim_time = current_sim_time
+            
+            # Skip if auto mode is disabled
+            if not self.auto_mode:
+                return
+            
+            # Check if night mode is active
+            if self._is_night_mode_active():
+                # During night mode, only allow turning off ventilation
+                current_status = self.pico_manager.get_ventilation_status()
+                if current_status:
+                    logger.info("Night mode active - turning off ventilation")
+                    self._execute_action(Action.TURN_OFF.value)
+                return
+            
+            # Get current state
+            previous_state = self.current_state
+            self.current_state = self._evaluate_state()
+            
+            # Skip if we couldn't determine the state
+            if not self.current_state:
+                return
+            
+            # Check if minimum time has passed since last action
+            time_since_last_action = float('inf')
+            if self.last_action_time:
+                time_since_last_action = (current_sim_time - self.last_action_time).total_seconds()
+            
+            if time_since_last_action < self.min_action_interval:
+                logger.debug(f"Skipping action change - minimum interval not reached ({time_since_last_action:.1f}s < {self.min_action_interval}s)")
+                return
+            
+            # Decide on action
+            action = self._decide_action()
+            
+            # Execute action
+            success = self._execute_action(action)
+            
+            if success:
+                # Update last action time
+                self.last_action = action
+                self.last_action_time = current_sim_time
+                
+                # Update model based on previous state transition (if applicable)
+                if previous_state and self.last_action:
+                    # Calculate reward based on state transition
+                    current_sensor_data = self.data_manager.latest_data
+                    reward = self._calculate_reward(previous_state, self.last_action, self.current_state, current_sensor_data)
+                    logger.info(f"Reward for transition from {previous_state} via {self.last_action} to {self.current_state}: {reward:.2f}")
+                    self._update_q_value(previous_state, self.last_action, reward, self.current_state)
+            
+            # Apply decay for exploration and learning rates
+            if self.enable_exploration:
+                # Decay exploration rate
+                self.exploration_rate = max(
+                    self.min_epsilon,
+                    self.exploration_rate * self.epsilon_decay
+                )
+                
+                # Decay learning rate
+                self.learning_rate = max(
+                    self.min_alpha,
+                    self.learning_rate * self.alpha_decay
+                )
+                
+            # Save Q-values more frequently in simulation
+            if random.random() < 0.1:  # 10% chance to save on each step
+                self.save_q_values(self.model_file)
+                
+        except Exception as e:
+            logger.error(f"Error in make_step_decision: {e}")
+    
+    def _calculate_reward(self, previous_state_key: str, action_taken: str, current_state_key: str, current_sensor_data: dict) -> float:
+        """
+        Calculate reward for a state transition after taking an action.
+        
+        Args:
+            previous_state_key: Previous state identifier
+            action_taken: Action that was taken
+            current_state_key: Resulting state identifier
+            current_sensor_data: Current sensor readings
+            
+        Returns:
+            float: Reward value for the transition
+        """
+        # Initialize reward
+        reward = 0.0
+        
+        # Parse state information
+        prev_state = self._parse_state_key(previous_state_key)
+        curr_state = self._parse_state_key(current_state_key)
+        
+        # Get current sensor data
+        co2 = current_sensor_data.get("scd41", {}).get("co2", 0)
+        temperature = current_sensor_data.get("scd41", {}).get("temperature", 20)
+        occupants = current_sensor_data.get("room", {}).get("occupants", 0)
+        
+        # Check if information is available
+        if not (prev_state and curr_state):
+            return 0.0
+        
+        # Define constants for reward calculation
+        ENERGY_COSTS = {
+            "off": 0.0,
+            "low": -0.1,
+            "medium": -0.3,
+            "max": -0.5
+        }
+        
+        # 1. CO2 Level Rewards
+        prev_co2_level = prev_state.get("co2_level", "low")
+        curr_co2_level = curr_state.get("co2_level", "low")
+        
+        # CO2 improvement reward
+        if prev_co2_level == "high" and curr_co2_level in ["medium", "low"]:
+            reward += 1.0  # Major improvement
+        elif prev_co2_level == "medium" and curr_co2_level == "low":
+            reward += 0.5  # Good improvement
+        
+        # CO2 degradation penalty
+        if prev_co2_level in ["low", "medium"] and curr_co2_level == "high":
+            reward -= 2.0  # Major degradation
+        elif prev_co2_level == "low" and curr_co2_level == "medium":
+            # Only penalize if the room is occupied
+            if curr_state.get("occupancy") == "occupied":
+                reward -= 0.5  # Minor degradation while occupied
+        
+        # Current state CO2 rewards/penalties
+        if curr_co2_level == "high":
+            reward -= 1.0  # High CO2 is bad
+            if curr_state.get("occupancy") == "occupied":
+                reward -= 1.0  # Even worse if occupied
+        elif curr_co2_level == "low":
+            reward += 0.2  # Low CO2 is good
+        
+        # 2. Temperature Comfort Rewards
+        # Get threshold values
+        temp_low_max = self.temp_thresholds["low_max"]
+        temp_medium_max = self.temp_thresholds["medium_max"]
+        
+        # Check if temperature is in comfort zone
+        in_comfort_zone = temp_low_max <= temperature <= temp_medium_max
+        if in_comfort_zone:
+            reward += 0.3  # Good temperature
+        else:
+            # Temperature too low or too high
+            temp_distance = min(abs(temperature - temp_low_max), abs(temperature - temp_medium_max))
+            # Scale penalty based on distance from comfort zone
+            temp_penalty = min(0.5, temp_distance * 0.1)
+            reward -= temp_penalty
+        
+        # 3. Energy Consumption
+        energy_cost = ENERGY_COSTS.get(action_taken, 0.0)
+        
+        # Apply energy cost with occupancy context
+        if curr_state.get("occupancy") == "empty":
+            # Increase energy penalty when empty
+            energy_cost *= 1.5
+        elif curr_co2_level == "low" and action_taken in ["medium", "max"]:
+            # Extra penalty for high energy use when CO2 is already low
+            energy_cost *= 1.2
+        
+        reward += energy_cost
+        
+        # 4. Time of day context
+        time_of_day = curr_state.get("time_of_day", "day")
+        if time_of_day == "night":
+            # During night, prioritize being off unless CO2 is high
+            if action_taken == "off" and curr_co2_level != "high":
+                reward += 0.4
+            elif action_taken in ["medium", "max"] and curr_co2_level != "high":
+                reward -= 0.3  # Penalty for high ventilation at night
+        
+        # 5. Logical action rewards
+        # If empty, reward off state more
+        if curr_state.get("occupancy") == "empty" and curr_co2_level == "low" and action_taken == "off":
+            reward += 0.2
+        
+        # If occupied with medium/high CO2, reward active ventilation
+        if curr_state.get("occupancy") == "occupied" and curr_co2_level in ["medium", "high"]:
+            if action_taken == "off":
+                reward -= 0.5  # Penalty for being off when ventilation is needed
+            elif action_taken in ["medium", "max"]:
+                reward += 0.3  # Reward for appropriate ventilation
+        
+        # Normalize reward to reasonable range
+        max_reward = 2.0
+        reward = max(-max_reward, min(max_reward, reward))
+        
+        return reward
+
     def _get_current_target_thresholds(self, occupants: int) -> tuple[dict, dict]:
         """
         Get current target thresholds based on occupancy level.
@@ -425,8 +636,8 @@ class MarkovController:
         if occupants == 0:
             # Empty home - use adaptive thresholds based on pattern analysis
             if self.occupancy_analyzer:
-                expected_duration = self.occupancy_analyzer.get_expected_empty_duration(datetime.now())
-                next_return = self.occupancy_analyzer.get_next_expected_return_time(datetime.now())
+                expected_duration = self.occupancy_analyzer.get_expected_empty_duration(self.current_sim_time or datetime.now())
+                next_return = self.occupancy_analyzer.get_next_expected_return_time(self.current_sim_time or datetime.now())
                 
                 if expected_duration and expected_duration > timedelta(hours=3):
                     # Long absence expected - use very energy-saving thresholds
@@ -434,7 +645,7 @@ class MarkovController:
                     active_temp_thr = self.VERY_LOW_ENERGY_THRESHOLDS_TEMP.copy()
                     logger.debug(f"Using very energy-saving thresholds - expected absence: {expected_duration}")
                     
-                elif next_return and next_return - datetime.now() < timedelta(hours=1):
+                elif next_return and next_return - (self.current_sim_time or datetime.now()) < timedelta(hours=1):
                     # Return expected soon - prepare the environment
                     active_co2_thr = self.PREPARE_FOR_RETURN_THRESHOLDS_CO2.copy()
                     active_temp_thr = self.PREPARE_FOR_RETURN_THRESHOLDS_TEMP.copy()
@@ -510,8 +721,8 @@ class MarkovController:
         if occupants == 0:
             # Empty home - use adaptive thresholds based on pattern analysis
             if self.occupancy_analyzer:
-                expected_duration = self.occupancy_analyzer.get_expected_empty_duration(datetime.now())
-                next_return = self.occupancy_analyzer.get_next_expected_return_time(datetime.now())
+                expected_duration = self.occupancy_analyzer.get_expected_empty_duration(self.current_sim_time or datetime.now())
+                next_return = self.occupancy_analyzer.get_next_expected_return_time(self.current_sim_time or datetime.now())
                 
                 if expected_duration and expected_duration > timedelta(hours=3):
                     # Long absence expected - use very energy-saving thresholds
@@ -519,7 +730,7 @@ class MarkovController:
                     self.temp_thresholds = self.VERY_LOW_ENERGY_THRESHOLDS_TEMP.copy()
                     logger.info(f"Using very energy-saving thresholds - expected absence: {expected_duration}")
                     
-                elif next_return and next_return - datetime.now() < timedelta(hours=1):
+                elif next_return and next_return - (self.current_sim_time or datetime.now()) < timedelta(hours=1):
                     # Return expected soon - prepare the environment
                     self.co2_thresholds = self.PREPARE_FOR_RETURN_THRESHOLDS_CO2.copy()
                     self.temp_thresholds = self.PREPARE_FOR_RETURN_THRESHOLDS_TEMP.copy()
@@ -616,7 +827,7 @@ class MarkovController:
             occupancy = Occupancy.OCCUPIED.value if occupants > 0 else Occupancy.EMPTY.value
             
             # Determine time of day
-            hour = datetime.now().hour
+            hour = (self.current_sim_time or datetime.now()).hour
             if 5 <= hour < 12:
                 time_of_day = TimeOfDay.MORNING.value
             elif 12 <= hour < 18:
@@ -650,9 +861,9 @@ class MarkovController:
         active_co2_thr, active_temp_thr = self._get_current_target_thresholds(current_occupants)
 
         if self.occupancy_analyzer and self.auto_mode:
-            next_return = self.occupancy_analyzer.get_next_expected_return_time(datetime.now())
+            next_return = self.occupancy_analyzer.get_next_expected_return_time(self.current_sim_time or datetime.now())
             if next_return:
-                time_until_return = next_return - datetime.now()
+                time_until_return = next_return - (self.current_sim_time or datetime.now())
                 if timedelta(minutes=30) <= time_until_return <= timedelta(minutes=60):
                     co2 = self.data_manager.latest_data["scd41"]["co2"]
                     if co2 and co2 > active_co2_thr.get("medium_max", 1100):
