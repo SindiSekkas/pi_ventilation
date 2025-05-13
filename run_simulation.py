@@ -84,6 +84,12 @@ def parse_arguments():
         help="Run in training mode with higher exploration rate"
     )
     
+    parser.add_argument(
+        "--compare-only",
+        action="store_true",
+        help="Only compare existing experiments without running new ones"
+    )
+    
     return parser.parse_args()
 
 def load_config(config_path):
