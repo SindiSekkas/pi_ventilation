@@ -27,7 +27,7 @@ NIGHT_MODE_START_HOUR = 23  # 11 PM
 NIGHT_MODE_END_HOUR = 7     # 7 AM
 
 # Markov Controller settings
-MARKOV_ENABLE_EXPLORATION = True  # Enable random actions for exploration
+MARKOV_ENABLE_EXPLORATION = False  # Enable random actions for exploration
 
 # Directories
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
