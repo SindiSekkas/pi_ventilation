@@ -262,9 +262,13 @@ class OccupantBehaviorModel:
                     sleep_hour = self.config["WEEKDAY_SLEEP_START_MEAN_HOUR"]
                 
                 # Cap return time to 1 hour before typical sleep time
-                max_return_hour = min(int(sleep_hour) - 1, 22)
+                max_return_hour = min(max(0, int(sleep_hour) - 1), 22)
                 if return_time.hour > max_return_hour:
-                    return_time = return_time.replace(hour=max_return_hour)
+                    # Create a new datetime to avoid issues with invalid hour values
+                    return_time = datetime.combine(
+                        return_time.date(),
+                        datetime.min.time().replace(hour=max_return_hour, minute=return_time.minute)
+                    )
                 
                 events.append({
                     "type": "leave",

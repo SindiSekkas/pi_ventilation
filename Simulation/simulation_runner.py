@@ -225,7 +225,7 @@ class SimulationRunner:
         
         return pref_manager
     
-    def _initialize_markov_controller(self) -> MarkovController:
+    def _initialize_markov_controller(self) -> "MarkovController":
         """
         Initialize the Markov controller.
         
@@ -236,17 +236,49 @@ class SimulationRunner:
         model_dir = os.path.dirname(self.markov_model_path)
         os.makedirs(model_dir, exist_ok=True)
         
-        # Initialize Markov controller
-        controller = MarkovController(
-            data_manager=self.sim_data_manager,
-            pico_manager=self.sim_pico_manager,
-            preference_manager=self.preference_manager,
-            model_dir=model_dir,
-            scan_interval=60 * self.config["markov_controller"]["scan_interval"],
-            occupancy_analyzer=self.occupancy_analyzer,
-            enable_exploration=self.config["markov_controller"]["enable_exploration"]
-        )
+        # Try to import real MarkovController
+        try:
+            from control.markov_controller import MarkovController
+            logger.info("Using real MarkovController from control module")
+            
+            # Initialize Markov controller
+            controller = MarkovController(
+                data_manager=self.sim_data_manager,
+                pico_manager=self.sim_pico_manager,
+                preference_manager=self.preference_manager,
+                model_dir=model_dir,
+                scan_interval=60 * self.config["markov_controller"]["scan_interval"],
+                occupancy_analyzer=self.occupancy_analyzer,
+                enable_exploration=self.config["markov_controller"]["enable_exploration"]
+            )
+            
+            # Ensure initial thresholds are set
+            controller.co2_thresholds = {
+                "low_max": 800,    # Upper bound for LOW
+                "medium_max": 1200  # Upper bound for MEDIUM
+            }
+            
+            controller.temp_thresholds = {
+                "low_max": 20,     # Upper bound for LOW
+                "medium_max": 24    # Upper bound for MEDIUM
+            }
+            
+        except ImportError:
+            # Fall back to mock implementation
+            from Simulation.mock_controllers import MockMarkovController
+            logger.info("Using MockMarkovController as fallback")
+            
+            controller = MockMarkovController(
+                data_manager=self.sim_data_manager,
+                pico_manager=self.sim_pico_manager,
+                preference_manager=self.preference_manager,
+                model_dir=model_dir,
+                scan_interval=60 * self.config["markov_controller"]["scan_interval"],
+                occupancy_analyzer=self.occupancy_analyzer,
+                enable_exploration=self.config["markov_controller"]["enable_exploration"]
+            )
         
+        logger.info(f"Initialized Markov controller with thresholds: CO2={controller.co2_thresholds}, Temp={controller.temp_thresholds}")
         return controller
     
     def _initialize_occupancy_analyzer(self) -> OccupancyPatternAnalyzer:
@@ -373,6 +405,12 @@ class SimulationRunner:
                     ventilated=(prev_action != "off"),
                     ventilation_speed=prev_action
                 )
+                
+                # Debug output
+                if step % 100 == 0:
+                    logger.debug(f"Step {step}: CO2={env_state['co2_ppm']:.1f}ppm, " 
+                                f"Temp={env_state['temperature_c']:.1f}°C, " 
+                                f"Occupants={num_awake+num_sleeping}")
                 
                 # Update predictive models
                 if step % 10 == 0:  # Update every 10 steps to simulate real-world delay
