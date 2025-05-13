@@ -20,6 +20,8 @@ env/
 *.csv
 *.json
 *.db
+*.png
+*.txt
 *.sqlite3
 /bot_data/
 /csv_data/
