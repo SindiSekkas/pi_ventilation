@@ -143,7 +143,10 @@ class VentilationSystem:
     
     def _apply_constant_strategy(self, sensor_data, occupancy_data, time_step_minutes):
         """Apply constant ventilation at configured speed."""
-        constant_speed = VentilationSpeed[self.parameters['constant_strategy']['speed'].value.upper()]
+        constant_speed_str = self.parameters['constant_strategy']['speed'].value \
+            if isinstance(self.parameters['constant_strategy']['speed'], Enum) \
+            else self.parameters['constant_strategy']['speed']
+        constant_speed = VentilationSpeed[constant_speed_str.upper()]
         
         if self.mode != VentilationMode.MECHANICAL or self.speed != constant_speed:
             self.set_mode(VentilationMode.MECHANICAL)
@@ -232,7 +235,9 @@ class VentilationSystem:
         
         # Apply schedule
         if active_schedule:
-            target_speed = active_schedule['speed']
+            target_speed_obj = active_schedule['speed']
+            target_speed = target_speed_obj if isinstance(target_speed_obj, VentilationSpeed) else VentilationSpeed[target_speed_obj.upper()]
+
             if target_speed == VentilationSpeed.OFF:
                 if self.mode != VentilationMode.OFF:
                     self.set_mode(VentilationMode.OFF)
@@ -264,13 +269,20 @@ class VentilationSystem:
             time_step_minutes: Simulation time step
             markov_controller: Optional external Markov controller
         """
-        # This is a placeholder - in the full simulation this will be implemented
-        # by connecting to your actual MarkovController
+        # If an external Markov controller is provided, its make_step_decision
+        # method will have already acted on the MockPicoManager.
+        # This method in VentilationSystem primarily handles other strategies
+        # or serves as a fallback/logging point if no external controller is used.
         if markov_controller:
-            # Use the provided MarkovController
-            return
+            # The decision was already made by markov_controller.make_step_decision()
+            # which updated self.mode and self.speed through MockPicoManager.
+            # We just log the current state set by the Markov controller.
+            logger.debug(f"Markov strategy (external controller): Mode={self.mode.value}, Speed={self.speed.value}")
+            return # Do not apply simplified logic if external controller is used.
         
-        # Simplified Markov strategy implementation
+        # Simplified/Fallback Markov strategy implementation (if no external controller)
+        # This part should ideally not be reached if the simulation setup is correct.
+        logger.warning("Applying simplified internal Markov strategy - external controller not provided or not active.")
         co2 = sensor_data['scd41']['co2']
         occupants = occupancy_data['total_occupants']
         current_hour = self.environment.current_time.hour
@@ -324,7 +336,7 @@ class VentilationSystem:
             params['q_values'][state_key][action] = 1.0
         else:
             # Use learned policy (would be populated during training)
-            if state_key in params['q_values']:
+            if state_key in params['q_values'] and params['q_values'][state_key]:
                 # Find best action from Q-values
                 best_action = max(params['q_values'][state_key].items(), 
                                  key=lambda x: x[1])[0]
@@ -337,14 +349,15 @@ class VentilationSystem:
         if action == "off":
             if self.mode != VentilationMode.OFF:
                 self.set_mode(VentilationMode.OFF)
-                logger.debug(f"Markov strategy: ventilation OFF (state: {state_key})")
+                logger.debug(f"Markov strategy (internal fallback): ventilation OFF (state: {state_key})")
         else:
-            mode, speed = action.split('_')
-            if mode == "mechanical":
-                if self.mode != VentilationMode.MECHANICAL or self.speed.value != speed:
+            mode_str, speed_str = action.split('_')
+            if mode_str == "mechanical":
+                target_speed = VentilationSpeed[speed_str.upper()]
+                if self.mode != VentilationMode.MECHANICAL or self.speed != target_speed:
                     self.set_mode(VentilationMode.MECHANICAL)
-                    self.set_speed(VentilationSpeed[speed.upper()])
-                    logger.debug(f"Markov strategy: ventilation {speed} (state: {state_key})")
+                    self.set_speed(target_speed)
+                    logger.debug(f"Markov strategy (internal fallback): ventilation {speed_str} (state: {state_key})")
     
     def _apply_predictive_strategy(self, sensor_data, occupancy_data, time_step_minutes, 
                                   occupancy_analyzer=None):
@@ -458,6 +471,9 @@ class VentilationSystem:
             dict: Current ventilation state
         """
         # Apply the selected strategy
+        # Note: If MarkovController is used, it acts directly on self.mode/self.speed
+        # via the MockPicoManager. So, _apply_markov_strategy here mainly logs or
+        # handles the case where the external controller isn't active.
         if self.strategy == ControlStrategy.MANUAL:
             self._apply_manual_strategy(sensor_data, occupancy_data, time_step_minutes)
         
@@ -486,7 +502,7 @@ class VentilationSystem:
         
         return self.get_current_state()
     
-    def set_mode(self, mode):
+    def set_mode(self, mode: VentilationMode):
         """
         Set ventilation mode.
         
@@ -494,8 +510,12 @@ class VentilationSystem:
             mode: VentilationMode enum value
         """
         if not isinstance(mode, VentilationMode):
-            mode = VentilationMode(mode)
-        
+            try:
+                mode = VentilationMode(mode)
+            except ValueError:
+                logger.error(f"Invalid ventilation mode value: {mode}")
+                return
+
         old_mode = self.mode
         self.mode = mode
         
@@ -506,7 +526,7 @@ class VentilationSystem:
         if old_mode != mode:
             logger.info(f"Ventilation mode changed: {old_mode.value} → {mode.value}")
     
-    def set_speed(self, speed):
+    def set_speed(self, speed: VentilationSpeed):
         """
         Set ventilation speed.
         
@@ -514,7 +534,11 @@ class VentilationSystem:
             speed: VentilationSpeed enum value
         """
         if not isinstance(speed, VentilationSpeed):
-            speed = VentilationSpeed(speed)
+            try:
+                speed = VentilationSpeed(speed)
+            except ValueError:
+                logger.error(f"Invalid ventilation speed value: {speed}")
+                return
         
         old_speed = self.speed
         self.speed = speed
