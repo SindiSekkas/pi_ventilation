@@ -1,83 +1,4 @@
-def _initialize_markov_q_values(self, markov_controller):
-        """
-        Initialize Markov controller with some basic Q-values to encourage ventilation.
-        
-        Args:
-            markov_controller: The MarkovController instance to initialize
-        """
-        # Create initial state-action values that will encourage ventilation to maintain good air quality
-        initial_q_values = {
-            # When CO2 is high in occupied space, use medium/max ventilation
-            "high_medium_occupied_day": {
-                "off": 0.1,
-                "low": 0.3,
-                "medium": 0.7,
-                "max": 0.9
-            },
-            "high_medium_occupied_evening": {
-                "off": 0.1,
-                "low": 0.4,
-                "medium": 0.8,
-                "max": 0.7
-            },
-            "high_medium_occupied_night": {
-                "off": 0.6,  # More preference for off at night
-                "low": 0.3,
-                "medium": 0.2,
-                "max": 0.1
-            },
-            
-            # When CO2 is medium, use low or medium ventilation
-            "medium_medium_occupied_day": {
-                "off": 0.2,
-                "low": 0.8,
-                "medium": 0.6,
-                "max": 0.3
-            },
-            "medium_medium_occupied_evening": {
-                "off": 0.3,
-                "low": 0.7,
-                "medium": 0.5,
-                "max": 0.2
-            },
-            
-            # When CO2 is low, mostly turn off ventilation
-            "low_medium_occupied_day": {
-                "off": 0.9,
-                "low": 0.3,
-                "medium": 0.1,
-                "max": 0.0
-            },
-            
-            # When space is empty, reduce ventilation based on CO2
-            "high_medium_empty_day": {
-                "off": 0.3,
-                "low": 0.7,
-                "medium": 0.4,
-                "max": 0.1
-            },
-            "medium_medium_empty_day": {
-                "off": 0.8,
-                "low": 0.4,
-                "medium": 0.1,
-                "max": 0.0
-            },
-            "low_medium_empty_day": {
-                "off": 0.9,
-                "low": 0.1,
-                "medium": 0.0,
-                "max": 0.0
-            }
-        }
-        
-        # Add these values to the controller's Q-values if they don't exist
-        for state, actions in initial_q_values.items():
-            if state not in markov_controller.q_values:
-                markov_controller.q_values[state] = actions.copy()
-        
-        # Save the updated Q-values
-        markov_controller.save_q_values(markov_controller.model_file)
-        logger.info(f"Initialized Markov controller with {len(initial_q_values)} basic state-action values")# simulation/simulation.py
+# simulation/simulation.py
 """
 Main simulation coordinator for adaptive ventilation system.
 Integrates environment, occupants, and ventilation components to run experiments.
@@ -342,22 +263,29 @@ class Simulation:
                     # Create mock PicoManager for hardware control
                     mock_pico = MockPicoManager(self.ventilation)
                     
-                    # Create MarkovController with higher exploration rate 
-                    # and initialize with some Q-values
+                    # Create MarkovController
+                    markov_dir = os.path.join(sim_data_dir, "markov")
+                    os.makedirs(markov_dir, exist_ok=True)
+                    
                     self.markov_controller = MarkovController(
                         data_manager=self.mock_data_manager,
                         pico_manager=mock_pico,
-                        model_dir=os.path.join(sim_data_dir, "markov"),
+                        model_dir=markov_dir,
                         scan_interval=30,  # Faster updates for simulation
                         enable_exploration=True
                     )
                     
-                    # Set exploration rate higher to encourage more learning
-                    self.markov_controller.exploration_rate = 0.5
-                    self.markov_controller.learning_rate = 0.3
+                    # IMPORTANT: Set learning parameters before starting
+                    self.markov_controller.exploration_rate = self.markov_explore_rate
+                    self.markov_controller.learning_rate = self.markov_learning_rate
                     
                     # Initialize with basic Q-values to encourage ventilation
                     self._initialize_markov_q_values(self.markov_controller)
+                    
+                    # Start the controller's thread - CRITICAL FOR LEARNING
+                    self.markov_controller.start()
+                    
+                    logger.info(f"Integrated real MarkovController with exploration={self.markov_explore_rate}, learning_rate={self.markov_learning_rate}")
                     
                     # Initialize sleep analyzer only for Markov controller
                     try:
@@ -370,7 +298,6 @@ class Simulation:
                         logger.error(f"Failed to initialize AdaptiveSleepAnalyzer: {e}")
                         self.sleep_analyzer = None
                     
-                    logger.info("Integrated real MarkovController with exploration=0.5")
                 except Exception as e:
                     logger.error(f"Failed to initialize MarkovController: {e}")
                     self.markov_controller = None
@@ -408,11 +335,12 @@ class Simulation:
     def _update_mock_data_manager(self):
         """Update mock data manager with current system state."""
         if self.mock_data_manager:
-            # Check if we have data to update with
+            # Ensure we have fresh data to update with
             if not hasattr(self.environment, 'co2') or not hasattr(self.environment, 'temperature'):
                 return
-                
+                    
             try:
+                # Update with current environment state - CRITICAL for controller decisions
                 self.mock_data_manager.latest_data = {
                     "timestamp": self.environment.current_time.strftime("%Y-%m-%d %H:%M:%S"),
                     "scd41": {
@@ -430,9 +358,16 @@ class Simulation:
                         "ventilation_speed": self.ventilation.speed.value
                     }
                 }
+                
+                # Force immediate update of ventilation status to match current simulator state
+                if self.ventilation.mode.value != "off":
+                    self.mock_data_manager.latest_data["room"]["ventilated"] = True
+                    self.mock_data_manager.latest_data["room"]["ventilation_speed"] = self.ventilation.speed.value
+                else:
+                    self.mock_data_manager.latest_data["room"]["ventilated"] = False
+                    
             except Exception as e:
                 logger.error(f"Error updating mock data manager: {e}")
-                # Don't raise to avoid breaking the simulation
     
     def run_experiment(self, experiment=None):
         """
@@ -582,6 +517,7 @@ class Simulation:
             except Exception as e:
                 logger.warning(f"Error in sleep analyzer: {e}")
                 # Capture error but continue simulation        
+        
         if self.occupancy_analyzer:
             try:
                 # Create status string
@@ -601,6 +537,14 @@ class Simulation:
         
         # Get sensor data
         sensor_data = self.environment.get_sensor_data()
+        
+        # Store previous ventilation state for Markov learning
+        previous_ventilation_state = None
+        if self.markov_controller:
+            previous_ventilation_state = {
+                'mode': self.ventilation.mode.value,
+                'speed': self.ventilation.speed.value
+            }
         
         # Update ventilation system
         ventilation_state = self.ventilation.update(

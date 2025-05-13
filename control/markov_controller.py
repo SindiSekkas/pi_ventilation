@@ -1,4 +1,4 @@
-# control/markov_controller.py
+# control/markov_controller.py - Debug Fix
 """Markov Decision Process based ventilation controller."""
 import os
 import json
@@ -160,6 +160,54 @@ class MarkovController:
         # Initialize Q-values and try to load from file
         self.q_values = {}
         self.load_q_values(self.model_file)
+        
+        # Manually initialize some basic Q-values
+        self._init_basic_q_values()
+        
+        # Debug counter
+        self.state_update_counter = 0
+        self.q_update_counter = 0
+    
+    def _init_basic_q_values(self):
+        """Initialize some basic Q-values to encourage learning."""
+        basic_states = [
+            f"{CO2Level.LOW.value}_{TemperatureLevel.MEDIUM.value}_{Occupancy.EMPTY.value}_{TimeOfDay.DAY.value}",
+            f"{CO2Level.MEDIUM.value}_{TemperatureLevel.MEDIUM.value}_{Occupancy.EMPTY.value}_{TimeOfDay.DAY.value}",
+            f"{CO2Level.HIGH.value}_{TemperatureLevel.MEDIUM.value}_{Occupancy.EMPTY.value}_{TimeOfDay.DAY.value}",
+            f"{CO2Level.LOW.value}_{TemperatureLevel.MEDIUM.value}_{Occupancy.OCCUPIED.value}_{TimeOfDay.DAY.value}",
+            f"{CO2Level.MEDIUM.value}_{TemperatureLevel.MEDIUM.value}_{Occupancy.OCCUPIED.value}_{TimeOfDay.DAY.value}",
+            f"{CO2Level.HIGH.value}_{TemperatureLevel.MEDIUM.value}_{Occupancy.OCCUPIED.value}_{TimeOfDay.DAY.value}",
+        ]
+        
+        for state in basic_states:
+            if state not in self.q_values:
+                self.q_values[state] = {}
+            
+            # Set default Q-values for each action
+            if "empty" in state:
+                self.q_values[state][Action.TURN_OFF.value] = 0.8
+                self.q_values[state][Action.TURN_ON_LOW.value] = 0.4
+                self.q_values[state][Action.TURN_ON_MEDIUM.value] = 0.2
+                self.q_values[state][Action.TURN_ON_MAX.value] = 0.0
+            elif "high" in state:
+                self.q_values[state][Action.TURN_OFF.value] = 0.0
+                self.q_values[state][Action.TURN_ON_LOW.value] = 0.2
+                self.q_values[state][Action.TURN_ON_MEDIUM.value] = 0.6
+                self.q_values[state][Action.TURN_ON_MAX.value] = 0.8
+            elif "medium" in state:
+                self.q_values[state][Action.TURN_OFF.value] = 0.2
+                self.q_values[state][Action.TURN_ON_LOW.value] = 0.7
+                self.q_values[state][Action.TURN_ON_MEDIUM.value] = 0.4
+                self.q_values[state][Action.TURN_ON_MAX.value] = 0.1
+            else:
+                self.q_values[state][Action.TURN_OFF.value] = 0.8
+                self.q_values[state][Action.TURN_ON_LOW.value] = 0.3
+                self.q_values[state][Action.TURN_ON_MEDIUM.value] = 0.1
+                self.q_values[state][Action.TURN_ON_MAX.value] = 0.0
+        
+        # Save initial values
+        self.save_q_values(self.model_file)
+        logger.info(f"Initialized {len(basic_states)} basic state-action values")
     
     def _load_night_mode_settings(self):
         """Retrieve night‐mode configuration from JSON or use defaults."""
@@ -207,8 +255,11 @@ class MarkovController:
             # Save Q-values
             with open(filepath, 'w') as f:
                 json.dump(self.q_values, f, indent=2)
+            
+            num_states = len(self.q_values)
+            total_values = sum(len(actions) for state, actions in self.q_values.items())
                 
-            logger.info(f"Q-values saved to {filepath}")
+            logger.info(f"Q-values saved to {filepath}: {num_states} states, {total_values} action pairs")
             return True
         except Exception as e:
             logger.error(f"Error saving Q-values to {filepath}: {e}")
@@ -350,6 +401,11 @@ class MarkovController:
     
     def _control_loop(self):
         """Main control loop for Markov controller."""
+        logger.info("Markov control loop started")
+        
+        # Save initial q_values
+        self.save_q_values(self.model_file)
+        
         while self.running:
             try:
                 # Skip if auto mode is disabled
@@ -370,6 +426,11 @@ class MarkovController:
                 # Get current state
                 previous_state = self.current_state
                 self.current_state = self._evaluate_state()
+                
+                # Log state evaluation results
+                self.state_update_counter += 1
+                if self.state_update_counter % 5 == 0:  # Log every 5 updates
+                    logger.info(f"State evaluation: current_state={self.current_state}")
                 
                 # Skip if we couldn't determine the state
                 if not self.current_state:
@@ -400,9 +461,10 @@ class MarkovController:
                     
                     # Update model based on previous state transition (if applicable)
                     if previous_state and self.last_action:
-                        # For simplicity in this sprint, we'll use a default reward
-                        # In a real implementation, reward should be calculated based on state transition
-                        reward = 0.0  # Placeholder for now
+                        # Calculate reward based on the current state and CO2 level
+                        reward = self._calculate_reward(previous_state, self.last_action, self.current_state)
+                        
+                        # Update Q-value with the reward
                         self._update_q_value(previous_state, self.last_action, reward, self.current_state)
                 
                 # Wait for next check
@@ -412,6 +474,85 @@ class MarkovController:
                 logger.error(f"Error in Markov control loop: {e}")
                 time.sleep(self.scan_interval)
     
+    def _calculate_reward(self, state, action, next_state):
+        """
+        Calculate reward for a state-action-state transition.
+        
+        Args:
+            state: Previous state
+            action: Action taken
+            next_state: Resulting state
+            
+        Returns:
+            float: Reward value
+        """
+        try:
+            # Base reward components
+            energy_consumption = 0.0
+            air_quality = 0.0
+            comfort = 0.0
+            
+            # Parse states
+            prev_components = self._parse_state_key(state)
+            next_components = self._parse_state_key(next_state)
+            
+            # Energy consumption penalty
+            if action == Action.TURN_OFF.value:
+                energy_consumption = 0.0  # No energy consumption
+            elif action == Action.TURN_ON_LOW.value:
+                energy_consumption = -0.2  # Small penalty
+            elif action == Action.TURN_ON_MEDIUM.value:
+                energy_consumption = -0.4  # Medium penalty
+            elif action == Action.TURN_ON_MAX.value:
+                energy_consumption = -0.8  # Large penalty
+                
+            # Air quality rewards
+            prev_co2 = prev_components.get("co2_level", "medium")
+            next_co2 = next_components.get("co2_level", "medium")
+            
+            # Air quality improvement reward
+            if prev_co2 == "high" and next_co2 in ["medium", "low"]:
+                air_quality = 1.0  # Big reward for reducing high CO2
+            elif prev_co2 == "medium" and next_co2 == "low":
+                air_quality = 0.5  # Medium reward for further improvement
+            elif prev_co2 == "low" and next_co2 == "low":
+                air_quality = 0.2  # Small reward for maintaining good air quality
+                
+            # Air quality degradation penalty
+            if prev_co2 == "low" and next_co2 in ["medium", "high"]:
+                air_quality = -0.5  # Penalty for letting air quality degrade
+            elif prev_co2 == "medium" and next_co2 == "high":
+                air_quality = -1.0  # Larger penalty for poor air quality
+                
+            # Occupancy-based rewards
+            occupancy = next_components.get("occupancy", "occupied")
+            if occupancy == "occupied":
+                if next_co2 == "high":
+                    comfort = -1.0  # Large penalty for high CO2 when occupied
+                elif next_co2 == "medium":
+                    comfort = -0.2  # Small penalty for medium CO2 when occupied
+                else:
+                    comfort = 0.2  # Small reward for good air quality when occupied
+            else:  # Empty
+                if action != Action.TURN_OFF.value and next_co2 == "low":
+                    comfort = -0.5  # Penalty for running ventilation when empty and CO2 is already low
+                    
+            # Time of day adjustments
+            time_of_day = next_components.get("time_of_day", "day")
+            if time_of_day == "night" and action != Action.TURN_OFF.value:
+                comfort -= 0.3  # Additional penalty for ventilation at night
+                
+            # Combined reward
+            total_reward = energy_consumption + air_quality * 2.0 + comfort * 1.5
+            
+            logger.debug(f"Reward calculation: energy={energy_consumption:.2f}, air_quality={air_quality:.2f}, "
+                        f"comfort={comfort:.2f}, total={total_reward:.2f}")
+            return total_reward
+            
+        except Exception as e:
+            logger.error(f"Error calculating reward: {e}")
+            return 0.0  # Default reward on error
+            
     def _get_current_target_thresholds(self, occupants: int) -> tuple[dict, dict]:
         """
         Get current target thresholds based on occupancy level.
@@ -455,7 +596,7 @@ class MarkovController:
             # Home occupied - use compromise preferences from all registered users
             try:
                 # Get all user preferences
-                all_user_preferences = self.preference_manager.get_all_user_preferences()
+                all_user_preferences = self.preference_manager.get_all_user_preferences() if self.preference_manager else {}
                 
                 if all_user_preferences and self.preference_manager:
                     # Calculate compromise based on all registered users
@@ -578,36 +719,56 @@ class MarkovController:
             str: State key or None if state cannot be determined
         """
         try:
-            # Get current occupancy
-            occupants = self.data_manager.latest_data["room"]["occupants"]
+            # Default values
+            occupants = 0
+            co2 = 800
+            temp = 22
+            
+            # Safely get occupancy with fallback
+            try:
+                occupants = self.data_manager.latest_data.get("room", {}).get("occupants", 0)
+                if occupants is None:
+                    occupants = 0
+                    logger.warning("Missing occupancy data, defaulting to 0")
+            except (AttributeError, KeyError) as e:
+                logger.warning(f"Error getting occupancy: {e}")
+                occupants = 0
             
             # Update thresholds based on occupancy
             self._update_thresholds_for_occupancy(occupants)
             
-            # Get CO2 level
-            co2 = self.data_manager.latest_data["scd41"]["co2"]
-            if co2 is None:
-                logger.warning("Missing CO2 data")
-                return None
+            # Safely get CO2 level with fallback
+            try:
+                co2 = self.data_manager.latest_data.get("scd41", {}).get("co2")
+                if co2 is None:
+                    logger.warning("Missing CO2 data, using default")
+                    co2 = 800  # Default value
+            except (AttributeError, KeyError) as e:
+                logger.warning(f"Error getting CO2: {e}")
+                co2 = 800
             
             # Determine CO2 level category
-            if co2 < self.co2_thresholds["low_max"]:
+            if co2 < self.co2_thresholds.get("low_max", 800):
                 co2_level = CO2Level.LOW.value
-            elif co2 < self.co2_thresholds["medium_max"]:
+            elif co2 < self.co2_thresholds.get("medium_max", 1200):
                 co2_level = CO2Level.MEDIUM.value
             else:
                 co2_level = CO2Level.HIGH.value
             
-            # Get temperature
-            temp = self.data_manager.latest_data["scd41"]["temperature"]
-            if temp is None:
-                logger.warning("Missing temperature data")
-                return None
+            # Safely get temperature with fallback
+            try:
+                temp = self.data_manager.latest_data.get("scd41", {}).get("temperature")
+                if temp is None:
+                    logger.warning("Missing temperature data, using default")
+                    temp = 22  # Default value
+            except (AttributeError, KeyError) as e:
+                logger.warning(f"Error getting temperature: {e}")
+                temp = 22
                 
             # Determine temperature level
-            if temp < self.temp_thresholds["low_max"]:
+            if temp < self.temp_thresholds.get("low_max", 20):
                 temp_level = TemperatureLevel.LOW.value
-            elif temp < self.temp_thresholds["medium_max"]:
+            elif temp < self.temp_thresholds.get("medium_max", 24):
                 temp_level = TemperatureLevel.MEDIUM.value
             else:
                 temp_level = TemperatureLevel.HIGH.value
@@ -616,18 +777,30 @@ class MarkovController:
             occupancy = Occupancy.OCCUPIED.value if occupants > 0 else Occupancy.EMPTY.value
             
             # Determine time of day
-            hour = datetime.now().hour
-            if 5 <= hour < 12:
+            current_hour = datetime.now().hour
+            if 5 <= current_hour < 12:
                 time_of_day = TimeOfDay.MORNING.value
-            elif 12 <= hour < 18:
+            elif 12 <= current_hour < 18:
                 time_of_day = TimeOfDay.DAY.value
-            elif 18 <= hour < 22:
+            elif 18 <= current_hour < 22:
                 time_of_day = TimeOfDay.EVENING.value
             else:
                 time_of_day = TimeOfDay.NIGHT.value
             
             # Create state key
             state_key = self._create_state_key(co2_level, temp_level, occupancy, time_of_day)
+            
+            # Ensure this state exists in the Q-value table
+            if state_key not in self.q_values:
+                self.q_values[state_key] = {}
+                for action in [a.value for a in Action]:
+                    self.q_values[state_key][action] = 0.0
+                logger.info(f"Created new state in Q-table: {state_key}")
+                # Save Q-values after creating a new state
+                self.save_q_values(self.model_file)
+            
+            logger.debug(f"Evaluated state: {state_key} (CO2: {co2}, Temp: {temp}, Occupants: {occupants})")
+            
             return state_key
             
         except Exception as e:
@@ -646,7 +819,14 @@ class MarkovController:
             return Action.TURN_OFF.value
 
         # Check if occupancy analyzer predicts return soon - special case
-        current_occupants = self.data_manager.latest_data["room"]["occupants"]
+        current_occupants = 0
+        try:
+            current_occupants = self.data_manager.latest_data.get("room", {}).get("occupants", 0)
+            if current_occupants is None:
+                current_occupants = 0
+        except:
+            current_occupants = 0
+            
         active_co2_thr, active_temp_thr = self._get_current_target_thresholds(current_occupants)
 
         if self.occupancy_analyzer and self.auto_mode:
@@ -654,13 +834,16 @@ class MarkovController:
             if next_return:
                 time_until_return = next_return - datetime.now()
                 if timedelta(minutes=30) <= time_until_return <= timedelta(minutes=60):
-                    co2 = self.data_manager.latest_data["scd41"]["co2"]
-                    if co2 and co2 > active_co2_thr.get("medium_max", 1100):
-                        current_status = self.pico_manager.get_ventilation_status()
-                        current_speed = self.pico_manager.get_ventilation_speed()
-                        if not current_status or current_speed == Action.TURN_ON_LOW.value:
-                            logger.info(f"Pre-arrival ventilation: CO2={co2}, return in {time_until_return}")
-                            return Action.TURN_ON_MEDIUM.value
+                    try:
+                        co2 = self.data_manager.latest_data.get("scd41", {}).get("co2", 0)
+                        if co2 and co2 > active_co2_thr.get("medium_max", 1100):
+                            current_status = self.pico_manager.get_ventilation_status()
+                            current_speed = self.pico_manager.get_ventilation_speed()
+                            if not current_status or current_speed == Action.TURN_ON_LOW.value:
+                                logger.info(f"Pre-arrival ventilation: CO2={co2}, return in {time_until_return}")
+                                return Action.TURN_ON_MEDIUM.value
+                    except:
+                        pass
 
         # Epsilon-greedy exploration strategy
         if self.enable_exploration and random.random() < self.exploration_rate:
@@ -751,10 +934,14 @@ class MarkovController:
         # Update Q-value
         self.q_values[state_key][action] = current_q + self.learning_rate * td_error
         
-        logger.debug(f"Updated Q-value for state: {state_key}, action: {action}, new value: {self.q_values[state_key][action]:.4f}")
+        # Count updates for periodic saving
+        self.q_update_counter += 1
         
-        # Periodically save Q-values (very low frequency to avoid I/O overhead)
-        if random.random() < 0.01:  # ~1% chance to save on each update
+        logger.info(f"Updated Q-value for state: {state_key}, action: {action}, "
+                    f"reward: {reward:.2f}, new value: {self.q_values[state_key][action]:.4f}")
+        
+        # Save Q-values on each update during training
+        if self.q_update_counter % 10 == 0:  # Save every 10 updates
             self.save_q_values(self.model_file)
     
     def set_auto_mode(self, enabled):
@@ -778,7 +965,13 @@ class MarkovController:
     def get_status(self):
         """Get controller status information."""
         # Get current occupancy for status report
-        occupants = self.data_manager.latest_data["room"]["occupants"]
+        occupants = 0
+        try:
+            occupants = self.data_manager.latest_data.get("room", {}).get("occupants", 0)
+            if occupants is None:
+                occupants = 0
+        except:
+            occupants = 0
         
         return {
             "auto_mode": self.auto_mode,

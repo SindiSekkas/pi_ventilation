@@ -153,15 +153,54 @@ def main():
         
         # Report some statistics
         try:
-            with open(model_file, 'r') as f:
-                q_values = json.load(f)
-            
-            num_states = len(q_values)
-            total_values = sum(len(actions) for state, actions in q_values.items())
-            
-            logging.info(f"Model statistics: {num_states} states, {total_values} state-action pairs")
+            logging.info(f"Checking model file at: {model_file}")
+            if os.path.exists(model_file):
+                file_size = os.path.getsize(model_file)
+                logging.info(f"Model file exists, size: {file_size} bytes")
+                
+                with open(model_file, 'r') as f:
+                    file_content = f.read()
+                    logging.info(f"File content: {file_content[:200]}..." if len(file_content) > 200 else file_content)
+                    
+                    # Reset file pointer and load JSON
+                    f.seek(0)
+                    q_values = json.load(f)
+                
+                num_states = len(q_values)
+                total_values = sum(len(actions) for state, actions in q_values.items())
+                
+                logging.info(f"Model statistics: {num_states} states, {total_values} state-action pairs")
+                
+                # Check the keys in the model
+                if num_states > 0:
+                    first_state = next(iter(q_values.keys()))
+                    logging.info(f"Sample state key: {first_state}")
+                    
+                    # Check values for the first state to see if learning occurred
+                    if first_state in q_values:
+                        first_state_actions = q_values[first_state]
+                        logging.info(f"Q-values for sample state: {first_state_actions}")
+                        
+                        # Check if all values are the same initial values or if learning occurred
+                        values = list(first_state_actions.values())
+                        if all(v in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0] for v in values):
+                            logging.warning("Q-values appear to be initial values only, learning may not have occurred")
+                        else:
+                            logging.info("Q-values show variability, learning has likely occurred")
+            else:
+                logging.error(f"Model file doesn't exist at: {model_file}")
+                
+            # Also check temp directory where model might be during simulation
+            sim_model_dir = os.path.join(output_dir, "sim_data", "markov")
+            sim_model_file = os.path.join(sim_model_dir, "markov_model.json")
+            if os.path.exists(sim_model_file):
+                logging.info(f"Found simulation model file at: {sim_model_file}")
+                with open(sim_model_file, 'r') as f:
+                    sim_q_values = json.load(f)
+                sim_states = len(sim_q_values)
+                logging.info(f"Simulation model has {sim_states} states")
         except Exception as e:
-            logging.error(f"Error reading model statistics: {e}")
+            logging.error(f"Error during model diagnostics: {e}", exc_info=True)
     else:
         logging.error(f"Training completed but model file not found at {model_file}")
         return 1
