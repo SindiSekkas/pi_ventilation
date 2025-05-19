@@ -61,7 +61,7 @@ def parse_arguments():
         "--strategies", 
         type=str, 
         nargs="+",
-        choices=["all", "threshold", "constant", "scheduled", "markov", "predictive"],
+        choices=["all", "threshold", "constant", "scheduled", "interval", "markov", "predictive"], # Added "interval"
         default=["all"],
         help="Control strategies to evaluate"
     )
@@ -174,6 +174,7 @@ def main():
             (ControlStrategy.CONSTANT, "Constant Low Ventilation"),
             (ControlStrategy.THRESHOLD, "Threshold-Based Control"),
             (ControlStrategy.SCHEDULED, "Scheduled Ventilation"),
+            (ControlStrategy.INTERVAL, "Regular Interval Ventilation"), # Added INTERVAL
             (ControlStrategy.MARKOV, "Markov-Based Control")
         ]
         
@@ -184,6 +185,7 @@ def main():
             "constant": (ControlStrategy.CONSTANT, "Constant Low Ventilation"),
             "threshold": (ControlStrategy.THRESHOLD, "Threshold-Based Control"),
             "scheduled": (ControlStrategy.SCHEDULED, "Scheduled Ventilation"),
+            "interval": (ControlStrategy.INTERVAL, "Regular Interval Ventilation"), # Added INTERVAL
             "markov": (ControlStrategy.MARKOV, "Markov-Based Control"),
             "predictive": (ControlStrategy.PREDICTIVE, "Occupancy Prediction")
         }
@@ -218,15 +220,22 @@ def main():
         
         # Get strategy-specific configuration
         strategy_config = config.get(strategy.name.lower(), {}) if config else {}
-        
+        description = f"Testing {name} strategy for {args.duration} days"
+        if strategy == ControlStrategy.INTERVAL:
+            description = "10 minutes of ventilation every 60 minutes" # Updated description
+            print(f"Setting up INTERVAL experiment, ControlStrategy.INTERVAL value is: {ControlStrategy.INTERVAL}") # DEBUG
+
         # Set up experiment
         experiment = sim.setup_experiment(
             name=name,
             strategy=strategy,
             duration_days=args.duration,
-            description=f"Testing {name} strategy for {args.duration} days"
+            description=description # Use potentially updated description
         )
         
+        if strategy == ControlStrategy.INTERVAL:
+            print(f"INTERVAL experiment set up: {experiment}") # DEBUG
+
         # Apply configuration overrides
         if strategy_config:
             strategy_key = f"{strategy.name.lower()}_strategy"
