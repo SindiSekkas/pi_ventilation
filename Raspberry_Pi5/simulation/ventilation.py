@@ -160,8 +160,6 @@ class VentilationSystem:
     def _apply_threshold_strategy(self, sensor_data, occupancy_data, time_step_minutes):
         """
         Apply CO2 threshold-based ventilation strategy.
-        
-        This is a common basic strategy that responds to measured CO2 levels.
         """
         params = self.parameters['threshold_strategy']
         co2 = sensor_data['scd41']['co2']
