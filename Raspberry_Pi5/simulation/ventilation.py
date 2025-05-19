@@ -29,6 +29,7 @@ class ControlStrategy(Enum):
     CONSTANT = auto()  # Always at same speed
     THRESHOLD = auto()  # Based on CO2 threshold
     SCHEDULED = auto()  # Based on time of day
+    INTERVAL = auto()  # Regular intervals throughout the day
     MARKOV = auto()  # Reinforcement learning-based (your approach)
     PREDICTIVE = auto()  # Using occupancy prediction
 
@@ -75,11 +76,8 @@ class VentilationSystem:
             },
             # Scheduled strategy parameters
             'scheduled_strategy': {
-                'schedules': [
-                    {'start_hour': 7, 'end_hour': 9, 'speed': VentilationSpeed.MEDIUM},  # Morning
-                    {'start_hour': 17, 'end_hour': 21, 'speed': VentilationSpeed.MEDIUM},  # Evening
-                    {'start_hour': 23, 'end_hour': 7, 'speed': VentilationSpeed.OFF}       # Night
-                ]
+                # Using minute-precision schedules instead of hour-based schedules
+                'schedules': []  # Empty as we now use the minute_schedules in the method
             },
             # Constant strategy parameters
             'constant_strategy': {
@@ -89,7 +87,13 @@ class VentilationSystem:
             'markov_strategy': {
                 'q_values': {},
                 'training_complete': False
-            }
+            },
+            # Interval strategy parameters
+            'interval_strategy': {
+                'interval_minutes': 60,  # Run every 60 minutes
+                'duration_minutes': 10,  # Run for 10 minutes
+                'speed': VentilationSpeed.MEDIUM  # Always use medium speed
+            },
         }
         
         # Operational history
@@ -196,47 +200,80 @@ class VentilationSystem:
         Apply time-based scheduled ventilation strategy.
         
         This strategy operates ventilation based on time of day, regardless of conditions.
+        Uses specific time windows with minute precision.
         """
-        current_hour = self.environment.current_time.hour
-        schedules = self.parameters['scheduled_strategy']['schedules']
+        current_time = self.environment.current_time
+        current_hour = current_time.hour
+        current_minute = current_time.minute
         
-        # Find applicable schedule
+        # Convert current time to minutes for easier comparison
+        current_time_minutes = current_hour * 60 + current_minute
+        
+        # Define schedule with minute precision
+        # Format: (start_hour, start_minute, duration_minutes, speed)
+        minute_schedules = [
+            (6, 30, 30, VentilationSpeed.MEDIUM),  # 06:30 for 30 minutes
+            (12, 30, 20, VentilationSpeed.MEDIUM), # 12:30 for 20 minutes
+            (18, 0, 30, VentilationSpeed.MAX),     # 18:00 for 30 minutes
+            (22, 0, 20, VentilationSpeed.MAX)      # 22:00 for 20 minutes
+        ]
+        
+        # Check if current time is within any scheduled window
         active_schedule = None
-        for schedule in schedules:
-            start_hour = schedule['start_hour']
-            end_hour = schedule['end_hour']
-            
-            if start_hour > end_hour:  # Crosses midnight
-                if current_hour >= start_hour or current_hour < end_hour:
-                    active_schedule = schedule
-                    break
-            else:
-                if start_hour <= current_hour < end_hour:
-                    active_schedule = schedule
-                    break
+        active_speed = None
         
-        # Apply schedule
+        for start_hour, start_minute, duration, speed in minute_schedules:
+            # Calculate start and end times in minutes
+            start_time_minutes = start_hour * 60 + start_minute
+            end_time_minutes = start_time_minutes + duration
+            
+            # Check if current time is within this window
+            if start_time_minutes <= current_time_minutes < end_time_minutes:
+                active_schedule = (start_hour, start_minute, duration)
+                active_speed = speed
+                break
+        
+        # Apply ventilation based on schedule
         if active_schedule:
-            target_speed_obj = active_schedule['speed']
-            target_speed = target_speed_obj if isinstance(target_speed_obj, VentilationSpeed) else VentilationSpeed[target_speed_obj.upper()]
-
-            if target_speed == VentilationSpeed.OFF:
-                if self.mode != VentilationMode.OFF:
-                    self.set_mode(VentilationMode.OFF)
-                    logger.debug(f"Scheduled strategy: ventilation OFF "
-                               f"({current_hour}:00 in {start_hour}:00-{end_hour}:00)")
-            else:
-                if self.mode != VentilationMode.MECHANICAL or self.speed != target_speed:
-                    self.set_mode(VentilationMode.MECHANICAL)
-                    self.set_speed(target_speed)
-                    logger.debug(f"Scheduled strategy: ventilation {target_speed.value} "
-                               f"({current_hour}:00 in {start_hour}:00-{end_hour}:00)")
+            start_hour, start_minute, duration = active_schedule
+            
+            if self.mode != VentilationMode.MECHANICAL or self.speed != active_speed:
+                self.set_mode(VentilationMode.MECHANICAL)
+                self.set_speed(active_speed)
+                logger.debug(f"Scheduled strategy: ventilation {active_speed.value} "
+                        f"({start_hour:02d}:{start_minute:02d} for {duration} minutes)")
         else:
-            # Default to OFF if no schedule applies
+            # Default to OFF if not in any scheduled window
             if self.mode != VentilationMode.OFF:
                 self.set_mode(VentilationMode.OFF)
-                logger.debug(f"Scheduled strategy: ventilation OFF (no applicable schedule)")
+                logger.debug(f"Scheduled strategy: ventilation OFF (no active schedule)")
     
+    def _apply_interval_strategy(self, sensor_data, occupancy_data, time_step_minutes):
+        """
+        Apply regular interval ventilation strategy.
+        
+        Runs ventilation for 10 minutes every 60 minutes throughout the day.
+        """
+        current_time = self.environment.current_time
+        current_minute = current_time.minute
+        
+        # Every 60 minutes, run for 10 minutes (e.g., at minute 0 of the hour)
+        is_ventilation_time = current_minute < self.parameters['interval_strategy']['duration_minutes']
+        
+        if is_ventilation_time:
+            # Turn on ventilation at medium speed
+            if self.mode != VentilationMode.MECHANICAL or self.speed != VentilationSpeed.MEDIUM:
+                self.set_mode(VentilationMode.MECHANICAL)
+                self.set_speed(VentilationSpeed.MEDIUM)
+                logger.debug(f"Interval strategy: ventilation MEDIUM "
+                           f"at {current_time.strftime('%H:%M')}")
+        else:
+            # Turn off ventilation
+            if self.mode != VentilationMode.OFF:
+                self.set_mode(VentilationMode.OFF)
+                logger.debug(f"Interval strategy: ventilation OFF "
+                           f"at {current_time.strftime('%H:%M')}")
+
     def _apply_markov_strategy(self, sensor_data, occupancy_data, time_step_minutes, 
                               markov_controller=None):
         """
@@ -468,6 +505,9 @@ class VentilationSystem:
         elif self.strategy == ControlStrategy.SCHEDULED:
             self._apply_scheduled_strategy(sensor_data, occupancy_data, time_step_minutes)
         
+        elif self.strategy == ControlStrategy.INTERVAL:
+            self._apply_interval_strategy(sensor_data, occupancy_data, time_step_minutes)
+
         elif self.strategy == ControlStrategy.MARKOV:
             self._apply_markov_strategy(sensor_data, occupancy_data, time_step_minutes, 
                                        markov_controller)
