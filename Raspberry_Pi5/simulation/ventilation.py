@@ -163,51 +163,33 @@ class VentilationSystem:
         co2 = sensor_data['scd41']['co2']
         current_hour = self.environment.current_time.hour
         
-        # Check night mode
+        # Night mode check - DISABLED in threshold strategy for fair comparison with Markov
+        # When comparing strategies, we want Markov to be the only one with night mode
         night_mode_active = False
-        if params['night_mode_enabled']:
-            start_hour = params['night_mode_start_hour']
-            end_hour = params['night_mode_end_hour']
-            
-            if start_hour > end_hour:  # Crosses midnight
-                night_mode_active = current_hour >= start_hour or current_hour < end_hour
-            else:
-                night_mode_active = start_hour <= current_hour < end_hour
         
-        # If night mode is active, turn off ventilation
-        if night_mode_active:
-            if self.mode != VentilationMode.OFF:
-                self.set_mode(VentilationMode.OFF)
-                logger.debug("Threshold strategy: night mode active, ventilation OFF")
-            return
-        
-        # Normal threshold logic
+        # Simple threshold logic based only on CO2 levels
         if co2 >= params['co2_high']:
             if self.mode != VentilationMode.MECHANICAL or self.speed != VentilationSpeed.MAX:
                 self.set_mode(VentilationMode.MECHANICAL)
                 self.set_speed(VentilationSpeed.MAX)
-                logger.debug(f"Threshold strategy: CO2={co2} > {params['co2_high']}, "
-                           f"ventilation MAX")
+                logger.debug(f"Threshold strategy: CO2={co2} >= {params['co2_high']}, ventilation MAX")
         
         elif co2 >= params['co2_medium']:
             if self.mode != VentilationMode.MECHANICAL or self.speed != VentilationSpeed.MEDIUM:
                 self.set_mode(VentilationMode.MECHANICAL)
                 self.set_speed(VentilationSpeed.MEDIUM)
-                logger.debug(f"Threshold strategy: CO2={co2} > {params['co2_medium']}, "
-                           f"ventilation MEDIUM")
+                logger.debug(f"Threshold strategy: CO2={co2} >= {params['co2_medium']}, ventilation MEDIUM")
         
         elif co2 >= params['co2_low']:
             if self.mode != VentilationMode.MECHANICAL or self.speed != VentilationSpeed.LOW:
                 self.set_mode(VentilationMode.MECHANICAL)
                 self.set_speed(VentilationSpeed.LOW)
-                logger.debug(f"Threshold strategy: CO2={co2} > {params['co2_low']}, "
-                           f"ventilation LOW")
+                logger.debug(f"Threshold strategy: CO2={co2} >= {params['co2_low']}, ventilation LOW")
         
         else:
             if self.mode != VentilationMode.OFF:
                 self.set_mode(VentilationMode.OFF)
-                logger.debug(f"Threshold strategy: CO2={co2} < {params['co2_low']}, "
-                           f"ventilation OFF")
+                logger.debug(f"Threshold strategy: CO2={co2} < {params['co2_low']}, ventilation OFF")
     
     def _apply_scheduled_strategy(self, sensor_data, occupancy_data, time_step_minutes):
         """
@@ -567,7 +549,7 @@ class VentilationSystem:
     def get_current_state(self):
         """
         Get current ventilation system state.
-        
+            
         Returns:
             dict: Current state
         """
@@ -582,7 +564,7 @@ class VentilationSystem:
     def get_operation_history(self):
         """
         Get operational history.
-        
+            
         Returns:
             list: Historical operation data
         """

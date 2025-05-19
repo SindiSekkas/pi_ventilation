@@ -26,7 +26,7 @@ class EnvironmentSimulator:
                  outdoor_temp_min=15.0,      # °C
                  outdoor_temp_max=25.0,     # °C
                  outdoor_humidity=40.0,     # %
-                 co2_per_person=113.3):     # ppm/hour/person (from thesis)
+                 co2_per_person=243.1):     # ppm/hour/person (from thesis)
         """
         Initialize the environment simulator with default values based on research.
         
@@ -65,9 +65,9 @@ class EnvironmentSimulator:
         # Ventilation effect rates from thesis (ppm/hour)
         self.ventilation_rates = {
             "natural": 610.3,      # 2 windows in tilt mode
-            "mechanical_low": 305.4,    # Fan 1
-            "mechanical_medium": 670.7, # Fan 2
-            "mechanical_max": 824.3     # Both fans
+            "mechanical_low": 403.2,    # Fan 1
+            "mechanical_medium": 768.5, # Fan 2
+            "mechanical_max": 922.1     # Both fans
         }
         
         # Temperature effects of ventilation (°C/hour)

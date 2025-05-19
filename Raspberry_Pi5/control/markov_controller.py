@@ -152,7 +152,7 @@ class MarkovController:
         self.min_alpha = 0.01  # Minimum learning rate (0.01-0.1 recommended)
         
         # Night mode settings
-        self.night_mode_enabled = True
+        self.night_mode_enabled = False
         self.night_mode_start_hour = 23
         self.night_mode_end_hour = 7
         
@@ -505,121 +505,85 @@ class MarkovController:
             logger.error(f"Error in make_step_decision: {e}")
     
     def _calculate_reward(self, previous_state_key: str, action_taken: str, current_state_key: str, current_sensor_data: dict) -> float:
-        """
-        Calculate reward for a state transition after taking an action.
-        
-        Args:
-            previous_state_key: Previous state identifier
-            action_taken: Action that was taken
-            current_state_key: Resulting state identifier
-            current_sensor_data: Current sensor readings
-            
-        Returns:
-            float: Reward value for the transition
-        """
-        # Initialize reward
         reward = 0.0
-        
-        # Parse state information
         prev_state = self._parse_state_key(previous_state_key)
         curr_state = self._parse_state_key(current_state_key)
         
-        # Get current sensor data
-        co2 = current_sensor_data.get("scd41", {}).get("co2", 0)
-        temperature = current_sensor_data.get("scd41", {}).get("temperature", 20)
-        occupants = current_sensor_data.get("room", {}).get("occupants", 0)
-        
-        # Check if information is available
         if not (prev_state and curr_state):
             return 0.0
+
+        co2 = current_sensor_data.get("scd41", {}).get("co2", 0)
+        temperature = current_sensor_data.get("scd41", {}).get("temperature", 20)
         
-        # Define constants for reward calculation
+        is_occupied = curr_state.get("occupancy") == "occupied"
+        is_empty = not is_occupied
+
         ENERGY_COSTS = {
             "off": 0.0,
-            "low": -0.1,
-            "medium": -0.3,
-            "max": -0.5
+            "low": -0.15,   
+            "medium": -0.35,
+            "max": -0.6
         }
+        current_energy_cost = ENERGY_COSTS.get(action_taken, 0.0)
         
-        # 1. CO2 Level Rewards
-        prev_co2_level = prev_state.get("co2_level", "low")
-        curr_co2_level = curr_state.get("co2_level", "low")
+        if is_empty and action_taken != "off":
+            current_energy_cost -= 3.0
+        reward += current_energy_cost
+
+        prev_co2_level_str = prev_state.get("co2_level", "low")
+        curr_co2_level_str = curr_state.get("co2_level", "low")
         
-        # CO2 improvement reward
-        if prev_co2_level == "high" and curr_co2_level in ["medium", "low"]:
-            reward += 1.0  # Major improvement
-        elif prev_co2_level == "medium" and curr_co2_level == "low":
-            reward += 0.5  # Good improvement
-        
-        # CO2 degradation penalty
-        if prev_co2_level in ["low", "medium"] and curr_co2_level == "high":
-            reward -= 2.0  # Major degradation
-        elif prev_co2_level == "low" and curr_co2_level == "medium":
-            # Only penalize if the room is occupied
-            if curr_state.get("occupancy") == "occupied":
-                reward -= 0.5  # Minor degradation while occupied
-        
-        # Current state CO2 rewards/penalties
-        if curr_co2_level == "high":
-            reward -= 1.0  # High CO2 is bad
-            if curr_state.get("occupancy") == "occupied":
-                reward -= 1.0  # Even worse if occupied
-        elif curr_co2_level == "low":
-            reward += 0.2  # Low CO2 is good
-        
-        # 2. Temperature Comfort Rewards
-        # Get threshold values
-        temp_low_max = self.temp_thresholds["low_max"]
-        temp_medium_max = self.temp_thresholds["medium_max"]
-        
-        # Check if temperature is in comfort zone
-        in_comfort_zone = temp_low_max <= temperature <= temp_medium_max
-        if in_comfort_zone:
-            reward += 0.3  # Good temperature
-        else:
-            # Temperature too low or too high
-            temp_distance = min(abs(temperature - temp_low_max), abs(temperature - temp_medium_max))
-            # Scale penalty based on distance from comfort zone
-            temp_penalty = min(0.5, temp_distance * 0.1)
-            reward -= temp_penalty
-        
-        # 3. Energy Consumption
-        energy_cost = ENERGY_COSTS.get(action_taken, 0.0)
-        
-        # Apply energy cost with occupancy context
-        if curr_state.get("occupancy") == "empty":
-            # Increase energy penalty when empty
-            energy_cost *= 1.5
-        elif curr_co2_level == "low" and action_taken in ["medium", "max"]:
-            # Extra penalty for high energy use when CO2 is already low
-            energy_cost *= 1.2
-        
-        reward += energy_cost
-        
-        # 4. Time of day context
-        time_of_day = curr_state.get("time_of_day", "day")
-        if time_of_day == "night":
-            # During night, prioritize being off unless CO2 is high
-            if action_taken == "off" and curr_co2_level != "high":
-                reward += 0.4
-            elif action_taken in ["medium", "max"] and curr_co2_level != "high":
-                reward -= 0.3  # Penalty for high ventilation at night
-        
-        # 5. Logical action rewards
-        # If empty, reward off state more
-        if curr_state.get("occupancy") == "empty" and curr_co2_level == "low" and action_taken == "off":
-            reward += 0.2
-        
-        # If occupied with medium/high CO2, reward active ventilation
-        if curr_state.get("occupancy") == "occupied" and curr_co2_level in ["medium", "high"]:
+        co2_target_medium = self.co2_thresholds.get("low_max", 800)
+        co2_target_high = self.co2_thresholds.get("medium_max", 1000)
+
+        if is_occupied:
+            if prev_co2_level_str == "high" and curr_co2_level_str == "medium":
+                reward += 1.0
+            elif prev_co2_level_str == "high" and curr_co2_level_str == "low":
+                reward += 1.5
+            elif prev_co2_level_str == "medium" and curr_co2_level_str == "low":
+                reward += 0.8
+            
+            if prev_co2_level_str == "low" and curr_co2_level_str == "medium":
+                reward -= 0.7
+            elif prev_co2_level_str == "low" and curr_co2_level_str == "high":
+                reward -= 1.5
+            elif prev_co2_level_str == "medium" and curr_co2_level_str == "high":
+                reward -= 1.0
+
+            if co2 > co2_target_high + 200:
+                reward -= 2.0
+            elif co2 > co2_target_high:
+                reward -= 1.0
+            elif co2 > co2_target_medium + 100:
+                reward -= 0.3
+            
+            if co2 < co2_target_medium:
+                reward += 0.3
+            if co2 < (co2_target_medium * 0.8):
+                reward += 0.2
+
+        elif is_empty:
+            if curr_co2_level_str == "high":
+                reward -= 0.5
+            if prev_co2_level_str == "high" and curr_co2_level_str == "medium":
+                 reward += 0.1
             if action_taken == "off":
-                reward -= 0.5  # Penalty for being off when ventilation is needed
-            elif action_taken in ["medium", "max"]:
-                reward += 0.3  # Reward for appropriate ventilation
+                reward += 0.5
+
+        if is_occupied:
+            temp_min_target = self.temp_thresholds.get("low_max", 20)
+            temp_max_target = self.temp_thresholds.get("medium_max", 24)
+            
+            if temp_min_target <= temperature <= temp_max_target:
+                reward += 0.5
+            elif temperature < temp_min_target:
+                reward -= 0.2 * (temp_min_target - temperature)
+            elif temperature > temp_max_target:
+                reward -= 0.2 * (temperature - temp_max_target)
         
-        # Normalize reward to reasonable range
-        max_reward = 2.0
-        reward = max(-max_reward, min(max_reward, reward))
+        max_abs_reward = 7.0
+        reward = max(-max_abs_reward, min(max_abs_reward, reward))
         
         return reward
 

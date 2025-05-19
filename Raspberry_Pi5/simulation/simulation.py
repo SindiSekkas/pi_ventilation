@@ -213,27 +213,27 @@ class Simulation:
             # Low CO2, Low Temp scenarios
             "low_low_empty_morning": {
                 "off": 0.9,
-                "low": 0.2,
-                "medium": 0.1,
-                "max": 0.05
+                "low": -0.5,
+                "medium": -0.8,
+                "max": -1.0
             },
             "low_low_empty_day": {
                 "off": 0.9,
-                "low": 0.2,
-                "medium": 0.1,
-                "max": 0.05
+                "low": -0.5,
+                "medium": -0.8,
+                "max": -1.0
             },
             "low_low_empty_evening": {
                 "off": 0.9,
-                "low": 0.2,
-                "medium": 0.1,
-                "max": 0.05
+                "low": -0.5,
+                "medium": -0.8,
+                "max": -1.0
             },
             "low_low_empty_night": {
                 "off": 0.95,
-                "low": 0.1,
-                "medium": 0.05,
-                "max": 0.01
+                "low": -0.6,
+                "medium": -0.9,
+                "max": -1.2
             },
             "low_low_occupied_morning": {
                 "off": 0.8,
@@ -262,28 +262,28 @@ class Simulation:
             
             # Medium CO2, Medium Temp scenarios
             "medium_medium_empty_morning": {
-                "off": 0.6,
-                "low": 0.8,
-                "medium": 0.4,
-                "max": 0.2
+                "off": 0.9,
+                "low": -0.5,
+                "medium": -0.8,
+                "max": -1.0
             },
             "medium_medium_empty_day": {
-                "off": 0.6,
-                "low": 0.8,
-                "medium": 0.4,
-                "max": 0.2
+                "off": 0.9,
+                "low": -0.5,
+                "medium": -0.8,
+                "max": -1.0
             },
             "medium_medium_empty_evening": {
-                "off": 0.6,
-                "low": 0.8,
-                "medium": 0.4,
-                "max": 0.2
+                "off": 0.9,
+                "low": -0.5,
+                "medium": -0.8,
+                "max": -1.0
             },
             "medium_medium_empty_night": {
                 "off": 0.95,
-                "low": 0.3,
-                "medium": 0.1,
-                "max": 0.05
+                "low": -0.6,
+                "medium": -0.9,
+                "max": -1.2
             },
             "medium_medium_occupied_morning": {
                 "off": 0.3,
@@ -312,28 +312,28 @@ class Simulation:
             
             # High CO2, Medium Temp scenarios
             "high_medium_empty_morning": {
-                "off": 0.1,
-                "low": 0.6,
-                "medium": 0.9,
-                "max": 0.7
+                "off": 0.2,
+                "low": 0.1,
+                "medium": -0.2,
+                "max": -0.5
             },
             "high_medium_empty_day": {
-                "off": 0.1,
-                "low": 0.6,
-                "medium": 0.9,
-                "max": 0.7
+                "off": 0.2,
+                "low": 0.1,
+                "medium": -0.2,
+                "max": -0.5
             },
             "high_medium_empty_evening": {
-                "off": 0.1,
-                "low": 0.6,
-                "medium": 0.9,
-                "max": 0.7
+                "off": 0.2,
+                "low": 0.1,
+                "medium": -0.2,
+                "max": -0.5
             },
             "high_medium_empty_night": {
                 "off": 0.5,
-                "low": 0.8,
-                "medium": 0.6,
-                "max": 0.3
+                "low": 0.2,
+                "medium": -0.3,
+                "max": -0.6
             },
             "high_medium_occupied_morning": {
                 "off": 0.0,
@@ -384,6 +384,74 @@ class Simulation:
                 "low": 0.5,
                 "medium": 0.8,
                 "max": 0.6
+            },
+            
+            # Additional states for empty room
+            "low_medium_empty_morning": {
+                "off": 1.5,
+                "low": -2.0,
+                "medium": -2.5,
+                "max": -3.0
+            },
+            "low_medium_empty_day": {
+                "off": 1.5,
+                "low": -2.0,
+                "medium": -2.5,
+                "max": -3.0
+            },
+            "low_medium_empty_evening": {
+                "off": 1.5,
+                "low": -2.0,
+                "medium": -2.5,
+                "max": -3.0
+            },
+            "low_medium_empty_night": {
+                "off": 1.7,
+                "low": -2.2,
+                "medium": -2.7,
+                "max": -3.2
+            },
+            "low_high_empty_morning": {
+                "off": 1.2,
+                "low": -1.8,
+                "medium": -2.3,
+                "max": -2.8
+            },
+            "low_high_empty_day": {
+                "off": 1.2,
+                "low": -1.8,
+                "medium": -2.3,
+                "max": -2.8
+            },
+            "medium_high_empty_morning": {
+                "off": 0.8,
+                "low": -0.4,
+                "medium": -0.7,
+                "max": -0.9
+            },
+            "medium_high_empty_day": {
+                "off": 0.8,
+                "low": -0.4,
+                "medium": -0.7,
+                "max": -0.9
+            },
+            "high_high_empty_morning": {
+                "off": 0.3,
+                "low": 0.2,
+                "medium": -0.1,
+                "max": -0.4
+            },
+            "high_high_empty_day": {
+                "off": 0.3,
+                "low": 0.2,
+                "medium": -0.1,
+                "max": -0.4
+            },
+            "high_high_empty_evening": {
+                "off": 0.3,
+                "low": 0.2,
+                "medium": -0.1,
+                "max": -0.4
             }
         }
         
@@ -508,8 +576,12 @@ class Simulation:
                     # Create mock PicoManager for hardware control
                     mock_pico = MockPicoManager(self.ventilation)
                     
-                    # Create MarkovController with higher exploration rate 
-                    # and initialize with some Q-values
+                    enable_exploration_for_decay_logic = self.markov_learning_rate > 0.0
+                    
+                    logger.info(f"MarkovController setup: effective exploration_rate_to_be_set={self.markov_explore_rate}, "
+                                f"effective learning_rate_to_be_set={self.markov_learning_rate}, "
+                                f"internal_decay_logic_enabled={enable_exploration_for_decay_logic}")
+                    
                     self.markov_controller = MarkovController(
                         data_manager=self.mock_data_manager,
                         pico_manager=mock_pico,
@@ -517,24 +589,30 @@ class Simulation:
                         occupancy_analyzer=self.occupancy_analyzer,
                         model_dir=os.path.join(sim_data_dir, "markov"),
                         scan_interval=30,  # Faster updates for simulation
-                        enable_exploration=self.markov_explore_rate > 0  # Enable if rate > 0
+                        enable_exploration=enable_exploration_for_decay_logic
                     )
                     
-                    # Set exploration rate higher to encourage more learning
+                    # Explicitly set exploration and learning rates
                     self.markov_controller.exploration_rate = self.markov_explore_rate
                     self.markov_controller.learning_rate = self.markov_learning_rate
                     
-                    # Initialize with basic Q-values to encourage ventilation
+                    # Ensure night mode is enabled for Markov
+                    self.markov_controller.night_mode_enabled = True
+                    self.markov_controller.night_mode_start_hour = 23
+                    self.markov_controller.night_mode_end_hour = 7
+                    logger.info("Night mode enabled for Markov controller (23:00-7:00)")
+                    
+                    # Логика загрузки Q-таблицы
                     if self.use_pretrained_markov:
-                        # Attempt to load a pre-trained model if specified
                         pretrained_model_path = os.path.join("trained_models", "markov_model_latest.json")
                         if os.path.exists(pretrained_model_path):
-                            self.markov_controller.load_q_values(pretrained_model_path)
-                            logger.info(f"Loaded pre-trained Markov model from {pretrained_model_path}")
-                        else:
-                            logger.warning(f"Pre-trained model not found at {pretrained_model_path}. Initializing with basic Q-values.")
-                            self._initialize_markov_q_values(self.markov_controller)
-                    else:
+                            if self.markov_controller.load_q_values(pretrained_model_path):
+                                logger.info(f"Loaded pre-trained Markov model from {pretrained_model_path} for strategy '{experiment['name']}'")
+                            else:
+                                logger.warning(f"Pre-trained model not found at {pretrained_model_path}. Initializing with basic Q-values.")
+                                self._initialize_markov_q_values(self.markov_controller)
+                    elif enable_exploration_for_decay_logic:
+                        logger.info(f"Training Markov model from scratch or basic initialization for strategy '{experiment['name']}'.")
                         self._initialize_markov_q_values(self.markov_controller)
                     
                     # Initialize sleep analyzer only for Markov controller

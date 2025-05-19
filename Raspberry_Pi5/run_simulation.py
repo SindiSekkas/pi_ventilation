@@ -206,11 +206,17 @@ def main():
     
     # Set Markov parameters based on mode
     if args.training_mode:
+        logging.info("Configuring MarkovController for TRAINING mode.")
         sim.markov_explore_rate = 0.5  # Higher for training
         sim.markov_learning_rate = 0.3  # Higher for training
+    elif args.use_pretrained:  # If this is EVALUATION of pre-trained model
+        logging.info("Configuring MarkovController for EVALUATION mode (using pre-trained model).")
+        sim.markov_explore_rate = 0.01  # Very low exploration for evaluation
+        sim.markov_learning_rate = 0.0  # No learning for evaluation
     else:
-        sim.markov_explore_rate = 0.1  # Lower for evaluation
-        sim.markov_learning_rate = 0.1  # Lower for evaluation
+        # If not training_mode and not use_pretrained, likely training from scratch with defaults
+        logging.info("Configuring MarkovController with default parameters from Simulation class (likely for training from scratch).")
+        # sim.markov_explore_rate and sim.markov_learning_rate remain at Simulation.__init__ values (0.1, 0.1)
     
     # Run selected strategies
     for strategy, name in strategies_to_run:
