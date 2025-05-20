@@ -537,6 +537,10 @@ class Simulation:
                     else:
                         self._initialize_markov_q_values(self.markov_controller)
                     
+                    # После загрузки модели и перед началом симуляции
+                    self.ventilation.set_mode(VentilationMode.OFF)
+                    self.ventilation.set_speed(VentilationSpeed.OFF)
+                    
                     # Initialize sleep analyzer only for Markov controller
                     try:
                         self.sleep_analyzer = AdaptiveSleepAnalyzer(

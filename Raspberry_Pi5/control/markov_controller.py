@@ -252,17 +252,20 @@ class MarkovController:
     def _is_night_mode_active(self):
         """Check if night mode is currently active."""
         if not self.night_mode_enabled:
+            logger.debug(f"Night mode is disabled")
             return False
         
         current_hour = (self.current_sim_time or datetime.now()).hour
         
-        # Handle case where night mode crosses midnight
+        # Определение ночного режима с подробным логированием
+        is_active = False
         if self.night_mode_start_hour > self.night_mode_end_hour:
-            # Night mode spans midnight (e.g., 23:00 - 7:00)
-            return current_hour >= self.night_mode_start_hour or current_hour < self.night_mode_end_hour
+            is_active = current_hour >= self.night_mode_start_hour or current_hour < self.night_mode_end_hour
         else:
-            # Night mode does not span midnight
-            return self.night_mode_start_hour <= current_hour < self.night_mode_end_hour
+            is_active = self.night_mode_start_hour <= current_hour < self.night_mode_end_hour
+        
+        logger.info(f"Night mode check: hour={current_hour}, start={self.night_mode_start_hour}, end={self.night_mode_end_hour}, active={is_active}")
+        return is_active
     
     def _create_state_key(self, co2_level, temp_level, occupancy, time_of_day):
         """Create a unique key for a state."""
@@ -517,6 +520,8 @@ class MarkovController:
         
         is_occupied = curr_state.get("occupancy") == "occupied"
         is_empty = not is_occupied
+        time_of_day = curr_state.get("time_of_day", "day")
+        is_night = time_of_day == "night"
 
         ENERGY_COSTS = {
             "off": 0.0,
@@ -526,8 +531,18 @@ class MarkovController:
         }
         current_energy_cost = ENERGY_COSTS.get(action_taken, 0.0)
         
+        # Multiply energy cost penalty by 5x at night
+        if is_night and action_taken != "off":
+            current_energy_cost *= 5.0
+            
+        # Strong penalty for ventilating an empty room
         if is_empty and action_taken != "off":
             current_energy_cost -= 3.0
+            
+        # Bonus for turning off ventilation at night
+        if is_night and action_taken == "off":
+            current_energy_cost += 2.0  # Large bonus for turning off at night
+        
         reward += current_energy_cost
 
         prev_co2_level_str = prev_state.get("co2_level", "low")
@@ -581,6 +596,10 @@ class MarkovController:
                 reward -= 0.2 * (temp_min_target - temperature)
             elif temperature > temp_max_target:
                 reward -= 0.2 * (temperature - temp_max_target)
+        
+        # Additional significant penalty for any ventilation at night
+        if is_night and action_taken != "off":
+            reward -= 5.0
         
         max_abs_reward = 7.0
         reward = max(-max_abs_reward, min(max_abs_reward, reward))
@@ -816,6 +835,9 @@ class MarkovController:
         Returns:
             str: Action key
         """
+        if self._is_night_mode_active():
+            return Action.TURN_OFF.value
+
         if not self.current_state:
             logger.warning("Current state is None, defaulting to TURN_OFF")
             return Action.TURN_OFF.value

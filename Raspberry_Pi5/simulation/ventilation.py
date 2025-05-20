@@ -5,6 +5,7 @@ Implements different control strategies for comparison.
 """
 import logging
 import random
+import copy
 from datetime import datetime, timedelta
 from enum import Enum, auto
 
@@ -39,6 +40,39 @@ class VentilationSystem:
     Allows comparison between different control approaches.
     """
     
+    # Define default parameters as class constant
+    DEFAULT_PARAMETERS = {
+        # Threshold strategy parameters
+        'threshold_strategy': {
+            'co2_low': 800,         # Turn off below this
+            'co2_medium': 1000,     # Use medium speed above this
+            'co2_high': 1200,       # Use max speed above this
+            'night_mode_enabled': False,
+            'night_mode_start_hour': 23,
+            'night_mode_end_hour': 7
+        },
+        # Scheduled strategy parameters
+        'scheduled_strategy': {
+            # Using minute-precision schedules instead of hour-based schedules
+            'schedules': []  # Empty as we now use the minute_schedules in the method
+        },
+        # Constant strategy parameters
+        'constant_strategy': {
+            'speed': VentilationSpeed.LOW
+        },
+        # Markov strategy parameters - these will be overridden by your actual implementation
+        'markov_strategy': {
+            'q_values': {},
+            'training_complete': False
+        },
+        # Interval strategy parameters
+        'interval_strategy': {
+            'interval_minutes': 60,  # Run every 60 minutes
+            'duration_minutes': 10,  # Run for 10 minutes
+            'speed': VentilationSpeed.MEDIUM  # Always use medium speed
+        },
+    }
+    
     def __init__(self, environment_simulator, strategy=ControlStrategy.THRESHOLD):
         """
         Initialize the ventilation system simulator.
@@ -63,38 +97,8 @@ class VentilationSystem:
             VentilationSpeed.MAX.value: 0.095  # Both fans: 95W = 0.095 kW
         }
         
-        # Strategy parameters
-        self.parameters = {
-            # Threshold strategy parameters
-            'threshold_strategy': {
-                'co2_low': 800,         # Turn off below this
-                'co2_medium': 1000,     # Use medium speed above this
-                'co2_high': 1200,       # Use max speed above this
-                'night_mode_enabled': True,
-                'night_mode_start_hour': 23,
-                'night_mode_end_hour': 7
-            },
-            # Scheduled strategy parameters
-            'scheduled_strategy': {
-                # Using minute-precision schedules instead of hour-based schedules
-                'schedules': []  # Empty as we now use the minute_schedules in the method
-            },
-            # Constant strategy parameters
-            'constant_strategy': {
-                'speed': VentilationSpeed.LOW
-            },
-            # Markov strategy parameters - these will be overridden by your actual implementation
-            'markov_strategy': {
-                'q_values': {},
-                'training_complete': False
-            },
-            # Interval strategy parameters
-            'interval_strategy': {
-                'interval_minutes': 60,  # Run every 60 minutes
-                'duration_minutes': 10,  # Run for 10 minutes
-                'speed': VentilationSpeed.MEDIUM  # Always use medium speed
-            },
-        }
+        # Strategy parameters - using deep copy to prevent shared state between instances
+        self.parameters = copy.deepcopy(VentilationSystem.DEFAULT_PARAMETERS)
         
         # Operational history
         self.operation_history = []
@@ -487,6 +491,7 @@ class VentilationSystem:
         Returns:
             dict: Current ventilation state
         """
+        
         # Apply the selected strategy
         # Note: If MarkovController is used, it acts directly on self.mode/self.speed
         # via the MockPicoManager. So, _apply_markov_strategy here mainly logs or

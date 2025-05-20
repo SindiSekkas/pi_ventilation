@@ -26,7 +26,7 @@ class EnvironmentSimulator:
                  outdoor_temp_min=15.0,      # °C
                  outdoor_temp_max=25.0,     # °C
                  outdoor_humidity=40.0,     # %
-                 co2_per_person=113.3):     # ppm/hour/person (from thesis)
+                 co2_per_person=243.1):     # ppm/hour/person (from thesis)
         """
         Initialize the environment simulator with default values based on research.
         
